@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Taski</title>
+  <meta name="description" content="Markdown-native personal task manager">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233b6ef5'/%3E%3Cpath d='M9 16.5l4.5 4.5L23 11' stroke='white' stroke-width='3.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="taski_src/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">Taski</a>
+    <span id="source" class="source"></span>
+    <span class="spacer"></span>
+    <button id="refresh" class="when-connected" type="button" title="Reload files">Refresh</button>
+    <button id="switch" class="when-connected" type="button" title="Open another workspace">Switch</button>
+  </header>
+  <div class="layout">
+    <nav id="sidebar" class="sidebar" aria-label="Projects"></nav>
+    <main id="main" class="main"><p class="muted loading">Loading…</p></main>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <noscript><p style="padding:1rem">Taski needs JavaScript.</p></noscript>
+
+  <!-- Plain scripts, in dependency order, so this page also works when opened
+       straight from disk (file://). Each file adds itself to window.Taski. -->
+  <script src="taski_src/config.js"></script>
+  <script src="taski_src/markdown.js"></script>
+  <script src="taski_src/storage/path.js"></script>
+  <script src="taski_src/storage/storage.js"></script>
+  <script src="taski_src/storage/http.js"></script>
+  <script src="taski_src/storage/python.js"></script>
+  <script src="taski_src/storage/filesystem.js"></script>
+  <script src="taski_src/storage/drive.js"></script>
+  <script src="taski_src/storage/scoped.js"></script>
+  <script src="taski_src/storage/picked.js"></script>
+  <script src="taski_src/tasks.js"></script>
+  <script src="taski_src/projects.js"></script>
+  <script src="taski_src/ui/dom.js"></script>
+  <script src="taski_src/ui/views.js"></script>
+  <script src="taski_src/app.js"></script>
+</body>
+</html>

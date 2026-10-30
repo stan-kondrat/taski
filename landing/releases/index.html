@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Download Taski</title>
+  <meta name="description" content="Download Taski as one HTML file or as its readable source folder. No install, no account, works offline.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233b6ef5'/%3E%3Cpath d='M9 16.5l4.5 4.5L23 11' stroke='white' stroke-width='3.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="../site.css">
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <a class="brand" href="../">
+        <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#3b6ef5"/><path d="M9 16.5l4.5 4.5L23 11" stroke="#fff" stroke-width="3.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Taski
+      </a>
+      <nav>
+        <a href="../demo/">Demo</a>
+        <a href="../app/">App</a>
+        <a href="https://github.com/stan-kondrat/taski">GitHub</a>
+      </nav>
+    </header>
+
+    <div class="hero" style="grid-template-columns: 1fr; padding-bottom: 32px;">
+      <div>
+        <h1>Download Taski</h1>
+        <p class="lede">No installer, no account, no internet needed. Save one HTML file, open it in your browser, and point it at a folder of Markdown files.</p>
+        <p class="version">Version __TASKI_VERSION__</p>
+      </div>
+    </div>
+
+    <div class="downloads">
+      <div class="download">
+        <h3>Single file</h3>
+        <p>Everything in one <code>taski.html</code>. Save it anywhere and double-click it.</p>
+        <a class="btn primary" href="taski.html" download="taski.html">Download taski.html</a>
+        <span class="size">__TASKI_HTML_SIZE__ · readable, not minified</span>
+      </div>
+      <div class="download">
+        <h3>Source folder</h3>
+        <p>The app as separate readable files, plus <code>server.py</code> and a sample workspace.</p>
+        <a class="btn" href="taski.zip" download="taski-__TASKI_VERSION__.zip">Download taski.zip</a>
+        <span class="size">__TASKI_ZIP_SIZE__ · taski.html + taski_src/</span>
+      </div>
+      <div class="download">
+        <h3>Use it online</h3>
+        <p>Nothing to download. Needed for Google Drive, which only signs in on a web address.</p>
+        <a class="btn" href="../app/">Open the app</a>
+        <span class="size">same code, served by GitHub Pages</span>
+      </div>
+    </div>
+    <p class="note">Older versions and release notes: <a href="https://github.com/stan-kondrat/taski/releases">GitHub Releases</a>.</p>
+
+    <section>
+      <h2>How to use it</h2>
+
+      <h3 class="sub">Single file</h3>
+      <ol class="steps">
+        <li>Download <code>taski.html</code> and put it anywhere — your desktop, a USB stick, a synced folder.</li>
+        <li>Open it in your browser (double-click, or drag it into the window). The start screen shows what works in that browser.</li>
+        <li>Click <strong>Choose folder…</strong> and pick an empty folder or an existing Taski workspace. In Chrome, Edge or Arc you can edit; allow it when the browser asks. Safari and Firefox open the folder read-only.</li>
+        <li>Create a project and add tasks. They're saved as <code>.md</code> files in that folder, which you can also edit in any text editor.</li>
+      </ol>
+      <p class="note">Next time, open the file again and click <strong>Reopen</strong>. Taski remembers the folder in this browser only.</p>
+
+      <h3 class="sub">Source folder</h3>
+      <ol class="steps">
+        <li>Download <code>taski.zip</code> and unzip it.</li>
+        <li>Open <code>taski.html</code> the same way as the single file — it works straight from disk.</li>
+        <li>Or, for any browser including Safari and Firefox, run <code>python3 server.py</code> in that folder and open <code>http://127.0.0.1:8000/taski.html</code>. It starts with the sample workspace; use <code>--root</code> to point at your own.</li>
+      </ol>
+      <p class="note">Every file is plain, commented JavaScript and CSS. Read it, change it, keep it — under the <a href="https://github.com/stan-kondrat/taski/blob/main/LICENSE">JSON License</a>.</p>
+    </section>
+
+    <section>
+      <h2>What works where</h2>
+      <p>Taski runs four ways — public page, downloaded file, Python static server, or your own <code>server.py</code> — and each supports different storage. See the <a href="../#use">full matrix</a>.</p>
+    </section>
+
+    <footer>
+      <a href="https://github.com/stan-kondrat/taski">Source on GitHub</a> · <a href="https://github.com/stan-kondrat/taski/blob/main/LICENSE">JSON License</a> — use it for Good, not Evil.
+    </footer>
+  </div>
+</body>
+</html>

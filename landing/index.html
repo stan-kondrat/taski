@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Taski — tasks as Markdown files</title>
+  <meta name="description" content="A private, serverless task manager in one static HTML page. Every project and task is a plain Markdown file in Google Drive or a folder on your computer.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233b6ef5'/%3E%3Cpath d='M9 16.5l4.5 4.5L23 11' stroke='white' stroke-width='3.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="site.css">
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <a class="brand" href="./">
+        <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#3b6ef5"/><path d="M9 16.5l4.5 4.5L23 11" stroke="#fff" stroke-width="3.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Taski
+      </a>
+      <nav>
+        <a href="demo/">Demo</a>
+        <a href="releases/">Download</a>
+        <a class="hide-sm" href="#how">How it works</a>
+        <a class="hide-sm" href="#privacy">Privacy</a>
+        <a href="https://github.com/stan-kondrat/taski">GitHub</a>
+      </nav>
+    </header>
+
+    <div class="hero">
+      <div>
+        <h1>Your tasks are just Markdown files.</h1>
+        <p class="lede">Taski is a personal task manager that is just a static HTML page. No server, no database, no account. Projects and tasks are plain <code>.md</code> files in Google Drive or a folder on your computer — readable by you, editable by any editor, and safe for AI agents to work on.</p>
+        <ul class="badges" aria-label="Highlights">
+          <li>Static HTML</li><li>Serverless</li><li>Privacy first</li><li>Works offline</li><li>Zero dependencies</li>
+        </ul>
+        <div class="cta">
+          <a class="btn primary" href="app/">Open Taski</a>
+          <a class="btn" href="releases/">Download</a>
+          <a class="btn" href="demo/">Try the demo</a>
+        </div>
+      </div>
+      <div class="file" aria-label="Example task file">
+        <div class="bar">homelab/tasks/k3s-cluster/README.md</div>
+<pre><span class="k">---
+type: task
+status:</span> doing
+<span class="k">priority:</span> high
+<span class="k">due:</span> 2026-11-09
+<span class="k">tags:</span> kubernetes, raspberry-pi
+<span class="k">---</span>
+
+<span class="h"># Run a k3s cluster on the Pis</span>
+
+- [x] Join pi-2 and pi-3 as agents
+- [x] Install MetalLB
+- [ ] Install Longhorn
+
+<span class="h">## Files</span>
+
+- [Install log](<span class="c">./install-log.md</span>)</pre>
+      </div>
+    </div>
+
+    <section id="use">
+      <h2>How to use Taski</h2>
+      <div class="ways">
+        <div class="way">
+          <span class="way-n">1</span>
+          <h3>Public page</h3>
+          <p>Open <a href="app/">stan-kondrat.github.io/taski/app/</a>. Nothing to install. The only way to use Google Drive without your own setup.</p>
+        </div>
+        <div class="way">
+          <span class="way-n">2</span>
+          <h3>Download and open</h3>
+          <p><a href="releases/">Download</a> the single <code>taski.html</code> or the source folder, then just open the HTML file in your browser. Works offline.</p>
+        </div>
+        <div class="way">
+          <span class="way-n">3</span>
+          <h3>Python static server</h3>
+          <p>In the unzipped folder run <code>python3 -m http.server 8000</code> and open <code>localhost:8000/taski.html</code>. Shows the <code>taski-demo/</code> folder next to it, read-only.</p>
+        </div>
+        <div class="way">
+          <span class="way-n">4</span>
+          <h3>Private server</h3>
+          <p>Run <code>python3 server.py --root ~/tasks</code> on your computer or your own server. Files are stored there and edited from any browser.</p>
+        </div>
+      </div>
+
+      <h3 class="sub">Where your files can live, for each way</h3>
+      <div class="table-wrap">
+        <table class="support matrix">
+          <thead>
+            <tr>
+              <th>Way to run</th>
+              <th>Folder on your computer</th>
+              <th>Google Drive</th>
+              <th>Files on the server</th>
+              <th>Web folder<br><span class="no">read-only</span></th>
+              <th>Offline</th>
+              <th>Setup</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th>1 · Public page</th>
+              <td class="yes">✓ <sup>a</sup></td>
+              <td class="yes">✓</td>
+              <td class="no">–</td>
+              <td class="yes">✓ <sup>b</sup></td>
+              <td class="no">–</td>
+              <td>none</td>
+            </tr>
+            <tr>
+              <th>2 · Downloaded HTML, opened from disk</th>
+              <td class="yes">✓ <sup>a</sup></td>
+              <td class="no">– <sup>c</sup></td>
+              <td class="no">–</td>
+              <td class="yes">✓ <sup>b</sup></td>
+              <td class="yes">✓</td>
+              <td>download</td>
+            </tr>
+            <tr>
+              <th>3 · <code>python3 -m http.server</code></th>
+              <td class="yes">✓ <sup>a</sup></td>
+              <td class="yes">✓ <sup>d</sup></td>
+              <td>read-only</td>
+              <td class="yes">✓ <sup>b</sup></td>
+              <td class="yes">✓</td>
+              <td>one command</td>
+            </tr>
+            <tr>
+              <th>4 · <code>python3 server.py</code></th>
+              <td class="yes">✓ <sup>a</sup></td>
+              <td class="yes">✓ <sup>d</sup></td>
+              <td class="yes">✓ read &amp; write</td>
+              <td class="yes">✓ <sup>b</sup></td>
+              <td class="yes">✓ <sup>e</sup></td>
+              <td>one command</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <ol class="footnotes" type="a">
+        <li>Read and write in Chrome, Edge, Arc, Brave and other Chromium browsers, on <code>https://</code>, <code>localhost</code> or a file opened from disk. Safari and Firefox open a folder <strong>read-only</strong>; to edit there, use way 4.</li>
+        <li>An <code>http(s)://</code> address whose server allows cross-origin reads (GitHub Pages does). A page opened from disk can't read other files on disk by address, so for local files use a local folder or way 4.</li>
+        <li>Google signs in only on a web address, so a downloaded file links to the public page for Drive.</li>
+        <li>Needs your own Google OAuth client ID with this address as an allowed origin. See the <a href="https://github.com/stan-kondrat/taski#google-drive-setup">setup guide</a>.</li>
+        <li>On your own computer. On a remote server, offline means "no internet needed besides your server".</li>
+      </ol>
+      <p class="note"><strong>Link to a workspace:</strong> add <code>?storage=</code> (<code>http</code>, <code>server</code>, <code>folder</code> or <code>drive</code>) and <code>&amp;path=</code>, for example <code>taski.html?storage=server&amp;path=work</code>. <a href="https://github.com/stan-kondrat/taski#url-parameters">All parameters</a>.</p>
+      <p class="note"><strong>Private server safety:</strong> <code>server.py</code> has no login. It listens only on <code>127.0.0.1</code>, so reach a remote one through an SSH tunnel (<code>ssh -L 8000:127.0.0.1:8000 your-server</code>) or put it behind a reverse proxy with HTTPS and a password.</p>
+    </section>
+
+    <section id="how">
+      <h2>Files are the source of truth</h2>
+      <div class="two">
+        <div>
+          <p>Each project is a folder. Each task is a folder with a <code>README.md</code> or a single <code>.md</code> file. A short frontmatter block holds status, priority, due date and tags; everything else is free Markdown.</p>
+          <p>Taski only changes the lines it needs to, so your notes, extra fields and an agent's edits stay intact.</p>
+        </div>
+<pre class="tree">taski/
+├── README.md          ## Projects
+├── AGENTS.md          rules for agents
+├── homelab/
+│   ├── README.md      ## Tasks
+│   └── tasks/
+│       ├── k3s-cluster/
+│       │   ├── README.md
+│       │   └── install-log.md
+│       └── tailscale.md
+├── side-business/
+└── tiny-gpt/</pre>
+      </div>
+    </section>
+
+    <section>
+      <h2>Keep your files wherever you like</h2>
+      <div class="grid">
+        <div class="card"><h3>Google Drive</h3><p>Real Markdown files in a normal Drive folder. Sign in and edit from any browser.</p></div>
+        <div class="card"><h3>Folder on your computer</h3><p>Open a local folder directly in Chrome or Edge. Works offline.</p></div>
+        <div class="card"><h3>Local server</h3><p><code>python3 server.py</code> — read and write from any browser. Standard library only.</p></div>
+        <div class="card"><h3>Any web server</h3><p>Publish a folder read-only. That's how the <a href="demo/">demo</a> works.</p></div>
+      </div>
+    </section>
+
+    <section id="privacy">
+      <h2>Private by design</h2>
+      <div class="two">
+        <div>
+          <p>Taski is a single static HTML page with plain JavaScript. It runs entirely in your browser and has no backend of its own — there is no Taski server that could see, store or lose your tasks.</p>
+          <p>Your files go straight from your browser to where you keep them: your disk, or your own Google Drive. Host the page anywhere static files are served, or open it from your own computer.</p>
+        </div>
+        <ul class="checks">
+          <li>No account, no sign-up</li>
+          <li>No analytics, tracking or cookies</li>
+          <li>No third-party scripts — Google sign-in loads only if you choose Drive</li>
+          <li>Drive access token stays in the page's memory, never stored</li>
+          <li>Offline with a local folder or <code>server.py</code> on 127.0.0.1</li>
+          <li>Source on GitHub — read every line before you trust it</li>
+        </ul>
+      </div>
+    </section>
+
+    <section>
+      <h2>Small on purpose</h2>
+      <div class="grid">
+        <div class="card"><h3>Readable, no dependencies</h3><p>Plain, commented JavaScript — never minified, even in the single-file download. Nothing to install.</p></div>
+        <div class="card"><h3>Static and serverless</h3><p>Host it on GitHub Pages, any static web server, or just open it locally. Nothing to run in the cloud.</p></div>
+        <div class="card"><h3>Made for agents too</h3><p>An <code>AGENTS.md</code> explains the format, so AI tools can create and update tasks alongside you.</p></div>
+      </div>
+    </section>
+
+    <footer>
+      <a href="https://github.com/stan-kondrat/taski">Source on GitHub</a> · <a href="https://github.com/stan-kondrat/taski/blob/main/LICENSE">JSON License</a> — use it for Good, not Evil.
+    </footer>
+  </div>
+</body>
+</html>

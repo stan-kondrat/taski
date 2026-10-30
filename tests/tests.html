@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Taski tests</title>
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; margin: 24px; background: #fff; color: #1d1f23; }
+    @media (prefers-color-scheme: dark) { body { background: #15171a; color: #e6e7e9; } }
+    .pass { color: #2f8a4c; } .fail { color: #c93a3a; }
+    pre { white-space: pre-wrap; margin: 2px 0 8px 16px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Taski tests</h1>
+  <p id="summary">Running…</p>
+  <ol id="results"></ol>
+  <script src="../taski_src/config.js"></script>
+  <script src="../taski_src/markdown.js"></script>
+  <script src="../taski_src/storage/path.js"></script>
+  <script src="../taski_src/storage/storage.js"></script>
+  <script src="../taski_src/storage/http.js"></script>
+  <script src="../taski_src/storage/scoped.js"></script>
+  <script src="../taski_src/storage/picked.js"></script>
+  <script src="../taski_src/tasks.js"></script>
+  <script src="../taski_src/projects.js"></script>
+  <script>
+  (async function () {
+    const md = Taski.markdown;
+    const path = Taski.path;
+    const { parseTask, compareTasks } = Taski.tasks;
+    const { loadWorkspace } = Taski.projects;
+    const { httpStorage } = Taski.http;
+
+    const tests = [];
+    const test = (name, fn) => tests.push({ name, fn });
+    const eq = (a, b) => {
+      const sa = JSON.stringify(a), sb = JSON.stringify(b);
+      if (sa !== sb) throw new Error(`expected ${sb}\n     got ${sa}`);
+    };
+
+    const TASK = '---\ntype: task\nstatus: todo\nowner: me\n---\n\n# Hello world\n\nIntro.\n\n```\n- [ ] not a box\n```\n\n- [ ] one\n- [x] two\n\n## Files\n\n- [Notes](./notes.md)\n- [Site](https://example.com)\n';
+
+    test('parseFrontmatter keeps order and body', () => {
+      const fm = md.parseFrontmatter(TASK);
+      eq([...fm.fields.keys()], ['type', 'status', 'owner']);
+      eq(fm.body.startsWith('\n# Hello world'), true);
+      eq(md.parseFrontmatter('# no fm').present, false);
+    });
+
+    test('setField changes only one line', () => {
+      const out = md.setField(TASK, 'status', 'done');
+      eq(out, TASK.replace('status: todo', 'status: done'));
+      eq(md.setField(TASK, 'due', '2026-01-01').includes('owner: me\ndue: 2026-01-01\n---'), true);
+      eq(md.setField(TASK, 'owner', null).includes('owner'), false);
+      eq(md.setField('# T\n', 'status', 'doing'), '---\nstatus: doing\n---\n# T\n');
+    });
+
+    test('setField keeps CRLF line endings', () => {
+      const crlf = TASK.replace(/\n/g, '\r\n');
+      eq(md.setField(crlf, 'status', 'done'), crlf.replace('status: todo', 'status: done'));
+    });
+
+    test('checklist skips code blocks and toggles the right line', () => {
+      eq(md.checklist(TASK).map((i) => i.done), [false, true]);
+      const out = md.setCheckbox(TASK, 0, true);
+      eq(out.includes('- [x] one'), true);
+      eq(out.includes('- [ ] not a box'), true);
+    });
+
+    test('renderer numbers checkboxes like setCheckbox', () => {
+      const html = md.renderMarkdown(md.parseFrontmatter(TASK).body);
+      eq((html.match(/data-check="(\d)"/g) || []).length, 2);
+      eq(html.includes('<pre><code>- [ ] not a box</code></pre>'), true);
+    });
+
+    test('renderer escapes HTML and unsafe links', () => {
+      const html = md.renderMarkdown('<img src=x onerror=alert(1)> [x](javascript:alert(1)) **b**');
+      eq(html.includes('<img'), false);
+      eq(html.includes('javascript:'), false);
+      eq(html.includes('<strong>b</strong>'), true);
+    });
+
+    test('renderer draws tables', () => {
+      const html = md.renderMarkdown('| a | b |\n|---|--:|\n| 1 | 2 |');
+      eq(html.includes('<th>a</th>') && html.includes('<td style="text-align:right">2</td>'), true);
+    });
+
+    test('sectionLinks reads only that section', () => {
+      eq(md.sectionLinks(TASK, 'Files').map((l) => l.href), ['./notes.md', 'https://example.com']);
+      eq(md.sectionLinks(TASK, 'Tasks'), []);
+    });
+
+    test('appendToSection adds to existing or new section', () => {
+      const a = md.appendToSection('# P\n\n## Tasks\n\n- [A](a.md)\n\n## Notes\n\nx\n', 'Tasks', '- [B](b.md)');
+      eq(a, '# P\n\n## Tasks\n\n- [A](a.md)\n- [B](b.md)\n\n## Notes\n\nx\n');
+      const b = md.appendToSection('# P\n', 'Tasks', '- [B](b.md)');
+      eq(b, '# P\n\n## Tasks\n\n- [B](b.md)\n');
+      const c = md.appendToSection('# P\n\n## Tasks\n\n', 'Tasks', '- [B](b.md)');
+      eq(md.sectionLinks(c, 'Tasks').length, 1);
+    });
+
+    test('slugify', () => {
+      eq(md.slugify('Fix the Bug!  (urgent)'), 'fix-the-bug-urgent');
+      eq(md.slugify('Café déjà vu'), 'cafe-deja-vu');
+      eq(md.slugify('???'), 'untitled');
+    });
+
+    test('paths', () => {
+      eq(path.normalize('a/./b/../c/'), 'a/c');
+      eq(path.resolveRelative('p/tasks/t/README.md', './notes.md'), 'p/tasks/t/notes.md');
+      eq(path.resolveRelative('p/README.md', '../../x.md'), null);
+      eq(path.resolveRelative('p/README.md', 'https://x.y'), null);
+      eq(path.relativeLink('p/README.md', 'p/tasks/a b/README.md'), './tasks/a%20b/README.md');
+      eq(path.relativeLink('README.md', 'proj'), './proj');
+    });
+
+    test('parseTask', () => {
+      const t = parseTask('p/tasks/hello/README.md', TASK, 'r1');
+      eq([t.slug, t.title, t.status, t.priority], ['hello', 'Hello world', 'todo', 'normal']);
+      eq(t.progress, { done: 1, total: 2 });
+      eq(t.files.map((f) => f.path), ['p/tasks/hello/notes.md', null]);
+      eq(parseTask('p/tasks/x.md', 'no title', '').title, 'x');
+    });
+
+    test('compareTasks puts doing and high priority first', () => {
+      const mk = (status, priority, title) => parseTask(`${title}.md`, `---\nstatus: ${status}\npriority: ${priority}\n---\n# ${title}`, '');
+      const sorted = [mk('done', 'high', 'd'), mk('todo', 'low', 'c'), mk('todo', 'high', 'b'), mk('doing', 'low', 'a')].sort(compareTasks);
+      eq(sorted.map((t) => t.title), ['a', 'b', 'c', 'd']);
+    });
+
+    test('scopedStorage maps paths into a subfolder', async () => {
+      const files = new Map([['work/tasks/README.md', 'hi']]);
+      const calls = [];
+      const inner = {
+        kind: 'mem', label: 'Mem', canWrite: true, canList: true,
+        list: async (p) => { calls.push(['list', p]); return [{ name: 'README.md', path: `${p}/README.md`, kind: 'file' }]; },
+        read: async (p) => ({ text: files.get(p), rev: '1' }),
+        write: async (p, text) => { files.set(p, text); return { rev: '2' }; },
+        mkdir: async (p) => { calls.push(['mkdir', p]); },
+      };
+      const s = Taski.scoped.scopedStorage(inner, './work//tasks/');
+      eq(s.label, 'Mem › work/tasks');
+      eq((await s.read('README.md')).text, 'hi');
+      eq((await s.list('')).map((e) => e.path), ['README.md']);
+      await s.write('a/b.md', 'x');
+      await s.mkdir('a');
+      eq(files.get('work/tasks/a/b.md'), 'x');
+      eq(calls, [['list', 'work/tasks'], ['mkdir', 'work/tasks/a']]);
+      eq(Taski.scoped.scopedStorage(inner, '') === inner, true);
+      let escaped = false;
+      try { Taski.scoped.scopedStorage(inner, 'work').read('../../etc/passwd'); } catch { escaped = true; }
+      eq(escaped, true);
+    });
+
+    test('pickedStorage reads a folder chosen with webkitdirectory', async () => {
+      const file = (rel, text) => {
+        const f = new File([text], rel.split('/').pop(), { lastModified: 1000 });
+        Object.defineProperty(f, 'webkitRelativePath', { value: rel });
+        return f;
+      };
+      const s = Taski.picked.pickedStorage([
+        file('notes/README.md', '# WS'),
+        file('notes/proj/tasks/a.md', 'A'),
+        file('notes/.git/config', 'secret'),
+        file('notes/proj/.DS_Store', 'x'),
+      ]);
+      eq([s.label, s.canWrite, s.canList], ['Folder “notes” (copy)', false, true]);
+      eq((await s.list('')).map((e) => `${e.kind}:${e.path}`), ['file:README.md', 'dir:proj']);
+      eq((await s.list('proj')).map((e) => e.name), ['tasks']);
+      eq(await s.read('proj/tasks/a.md'), { text: 'A', rev: '1000-1' });
+      let missing = false;
+      try { await s.read('.git/config'); } catch (e) { missing = e.name === 'NotFoundError'; }
+      eq(missing, true);
+      let readOnly = false;
+      try { await s.write('README.md', 'x'); } catch (e) { readOnly = e.name === 'ReadOnlyError'; }
+      eq(readOnly, true);
+    });
+
+    test('httpStorage refuses file:// addresses with a helpful message', () => {
+      let message = '';
+      try { httpStorage('file:///Users/me/taski-demo/'); } catch (e) { message = e.message; }
+      eq(message.startsWith('A web folder must be an http:// or https:// address.'), true);
+      eq(httpStorage('https://example.com/ws').label, 'https://example.com/ws/');
+    });
+
+    test('loads the sample workspace over HTTP using manifests only', async () => {
+      const ws = await loadWorkspace(httpStorage('../taski-demo/'));
+      eq(ws.warnings, []);
+      eq(ws.projects.map((p) => p.path).sort(), ['homelab', 'side-business', 'taski-dev', 'tiny-gpt']);
+      const lab = ws.projects.find((p) => p.path === 'homelab');
+      eq(lab.tasks.length, 5);
+      eq(lab.tasks[0].title, 'Run a k3s cluster on the Pis');
+      const biz = ws.projects.find((p) => p.path === 'side-business');
+      eq(biz.tasks.map((t) => t.status).sort(), ['blocked', 'cancelled', 'doing', 'done', 'todo', 'todo']);
+      const gpt = ws.projects.find((p) => p.path === 'tiny-gpt');
+      eq([gpt.tasks.length, gpt.tasks[0].title], [6, 'Write a byte-pair encoding tokenizer']);
+    });
+
+    const list = document.getElementById('results');
+    let failed = 0;
+    for (const t of tests) {
+      const li = document.createElement('li');
+      try {
+        await t.fn();
+        li.className = 'pass';
+        li.textContent = `✓ ${t.name}`;
+      } catch (e) {
+        failed++;
+        li.className = 'fail';
+        li.textContent = `✗ ${t.name}`;
+        const pre = document.createElement('pre');
+        pre.textContent = e.message;
+        li.append(pre);
+      }
+      list.append(li);
+    }
+    const summary = document.getElementById('summary');
+    summary.textContent = failed ? `${failed} of ${tests.length} failed` : `All ${tests.length} passed`;
+    summary.className = failed ? 'fail' : 'pass';
+    document.title = summary.textContent;
+    window.testResult = { total: tests.length, failed };
+  })();
+  </script>
+</body>
+</html>

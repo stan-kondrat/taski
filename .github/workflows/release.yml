@@ -1,0 +1,46 @@
+# Publishes a GitHub Release when a version tag is pushed:
+#   git tag v0.1.0 && git push origin v0.1.0
+# The tag must match VERSION in taski_src/config.js. Assets are the readable,
+# unminified builds from scripts/build-dist.py: taski.html and taski.zip.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check tag matches VERSION
+        run: |
+          version=$(sed -n "s/^const VERSION = '\(.*\)';$/\1/p" taski_src/config.js)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match VERSION $version in taski_src/config.js" >&2
+            exit 1
+          fi
+
+      - name: Python tests
+        run: python3 -m unittest discover tests -v
+
+      - name: JavaScript tests (headless Chrome)
+        run: scripts/run-js-tests.sh google-chrome
+
+      - name: Build downloads
+        run: python3 scripts/build-dist.py dist
+
+      - name: Single file opens from disk
+        run: scripts/check-single-file.sh dist google-chrome
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/taski.html dist/taski.zip \
+            --title "Taski ${GITHUB_REF_NAME#v}" \
+            --generate-notes
