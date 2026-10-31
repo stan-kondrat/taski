@@ -3,7 +3,7 @@
 (function (Taski) {
 'use strict';
 
-const { DRIVE_CLIENT_ID, DRIVE_ROOT, LOCAL_WORKSPACE, DEMO_WORKSPACE, VERSION } = Taski.config;
+const { DRIVE_CLIENT_ID, DRIVE_API_KEY, DRIVE_ORIGINS, DRIVE_ROOT, LOCAL_WORKSPACE, DEMO_WORKSPACE, VERSION } = Taski.config;
 const { createProject, loadWorkspace } = Taski.projects;
 const { driveStorage } = Taski.drive;
 const { ensurePermission, filesystemStorage, filesystemSupported, hasPermission, pickFolder, rememberedFolder } = Taski.filesystem;
@@ -37,7 +37,7 @@ const listUi = new Map();
 // ---- settings kept in this browser only ----
 
 const PREFS_KEY = 'taski.source';
-/** @returns {{kind?: string, url?: string, clientId?: string, root?: string}} */
+/** @returns {{kind?: string, url?: string, clientId?: string, apiKey?: string, fullAccess?: boolean, root?: string}} */
 function prefs() {
   try {
     return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
@@ -118,6 +118,7 @@ async function connect(s, link) {
   setUrlParams(link);
   sourceLabel.textContent = `${s.label}${s.canWrite ? '' : ' · read-only'}`;
   document.body.classList.add('connected');
+  document.body.classList.toggle('can-grant', !!s.grantAccess);
   await refresh();
 }
 
@@ -216,7 +217,7 @@ const staticHowto = () => ['serve the Taski folder with any static web server, f
 
 /** @param {StartRequest} [want]  Choice and path from the URL, if any. */
 async function showPicker(want = { kind: null, path: '' }) {
-  document.body.classList.remove('connected');
+  document.body.classList.remove('connected', 'can-grant');
   sourceLabel.textContent = '';
   sidebar.replaceChildren();
   main.replaceChildren(h('p.muted.loading', null, 'Checking what this page can do…'));
@@ -337,8 +338,26 @@ async function showPicker(want = { kind: null, path: '' }) {
     why: ctx.folderPick ? null : 'This browser can’t pick folders.',
   });
 
-  // Google Drive: needs a web origin for sign-in.
-  const clientId = /** @type {HTMLInputElement} */ (h('input', { type: 'text', value: p.clientId || DRIVE_CLIENT_ID, placeholder: '1234-abc.apps.googleusercontent.com', required: true }));
+  // Google Drive: needs a web origin for sign-in, and the built-in client ID
+  // only works on the origins registered for it in Google Cloud.
+  const builtInWorksHere = !!DRIVE_CLIENT_ID && DRIVE_ORIGINS.includes(location.origin);
+  const ownId = p.clientId && p.clientId !== DRIVE_CLIENT_ID ? p.clientId : '';
+  const clientId = /** @type {HTMLInputElement} */ (h('input', { type: 'text', value: ownId, placeholder: '1234-abc.apps.googleusercontent.com', required: !builtInWorksHere }));
+  const fullAccess = /** @type {HTMLInputElement} */ (h('input', { type: 'checkbox', checked: ownId ? p.fullAccess !== false : true }));
+  const apiKey = /** @type {HTMLInputElement} */ (h('input', { type: 'text', value: ownId ? p.apiKey || '' : '', placeholder: 'AIza…' }));
+  const apiKeyLabel = h('label', null, 'API key, for “Add from Drive”', apiKey);
+  const showApiKey = () => { apiKeyLabel.hidden = fullAccess.checked; };
+  fullAccess.addEventListener('change', showApiKey);
+  showApiKey();
+  const ownIdBox = h('details.own-id', { open: !!ownId || !builtInWorksHere },
+    h('summary', null, 'Use your own client ID'),
+    h('label', null, 'OAuth client ID', clientId),
+    h('label.check', null, fullAccess, h('span', null, 'See every file in the folder (full ', h('code', null, 'drive'), ' scope; fine for your own client in testing mode)')),
+    apiKeyLabel,
+    h('p.muted.small', null, 'Create one in Google Cloud (type “Web application”) with ', h('code', null, location.origin), ' as an authorized JavaScript origin. ',
+      h('a', { href: 'https://github.com/stan-kondrat/taski#google-drive-setup', target: '_blank', rel: 'noopener' }, 'How to'), '.'));
+  const originNote = builtInWorksHere || !DRIVE_CLIENT_ID ? null
+    : h('p.note', null, 'Taski’s built-in Google sign-in works only on ', DRIVE_ORIGINS.map((o, i) => [i ? ', ' : '', h('code', null, o)]), `. On ${location.origin} you need your own client ID.`);
   const driveRoot = /** @type {HTMLInputElement} */ (h('input', { type: 'text', value: fromUrl('drive') || p.root || DRIVE_ROOT, required: true }));
   options.push({
     key: 'drive',
@@ -346,14 +365,22 @@ async function showPicker(want = { kind: null, path: '' }) {
     card: ctx.opened !== 'disk'
       ? h('form.choice', {
           onsubmit: run(async () => {
-            savePrefs({ kind: 'drive', clientId: clientId.value.trim(), root: driveRoot.value.trim() });
-            return driveStorage(clientId.value.trim(), driveRoot.value.trim());
+            const own = clientId.value.trim();
+            const id = own || (builtInWorksHere ? DRIVE_CLIENT_ID : '');
+            if (!id) throw new Error('Enter your own OAuth client ID to use Google Drive on this address.');
+            // Taski's own client is published with `drive.file`; your own client
+            // can ask for the whole Drive while it stays in testing mode.
+            const full = !!own && fullAccess.checked;
+            const key = own ? apiKey.value.trim() : DRIVE_API_KEY;
+            savePrefs({ kind: 'drive', clientId: own, apiKey: own ? key : '', fullAccess: full, root: driveRoot.value.trim() });
+            return driveStorage(id, driveRoot.value.trim(), { fullAccess: full, apiKey: key });
           }, () => ({ storage: 'drive', path: driveRoot.value.trim() === DRIVE_ROOT ? '' : driveRoot.value.trim() })),
         },
         h('h2', null, 'Google Drive'),
-        h('p.muted', null, 'Read and write Markdown files in a folder of your Drive.'),
-        DRIVE_CLIENT_ID ? null : h('label', null, 'OAuth client ID', clientId),
+        h('p.muted', null, 'Read and write Markdown files in a folder of your Drive. With Taski’s sign-in, Taski sees only the files it creates, plus existing ones you add with “Add from Drive”. With your own client ID it can see every file.'),
+        originNote,
         h('label', null, 'Folder in My Drive', driveRoot),
+        ownIdBox,
         h('button.primary', { type: 'submit' }, 'Connect Google Drive'))
       : null,
     why: ['Google sign-in needs a web address, not a file opened from disk. ', h('a', { href: ONLINE_APP }, 'Open the online app'), ' to use Drive.'],
@@ -420,6 +447,9 @@ async function refresh() {
   } catch (e) {
     showError(e);
     return;
+  }
+  if (storage.grantAccess && (workspace.warnings.length || workspace.projects.some((p) => p.warnings.length))) {
+    workspace.warnings.unshift('Google Drive shows Taski only the files it created and the ones you added. Use “Add from Drive” to add existing files and folders, including the folders they are in.');
   }
   renderSidebar();
   await route();
@@ -590,6 +620,17 @@ document.addEventListener('visibilitychange', () => {
 });
 
 document.getElementById('refresh')?.addEventListener('click', () => refresh().then(() => notify('Refreshed')));
+document.getElementById('grant')?.addEventListener('click', async () => {
+  if (!storage?.grantAccess) return;
+  try {
+    const n = await storage.grantAccess();
+    if (!n) return;
+    await refresh();
+    notify(`Added ${n} item${n > 1 ? 's' : ''} from Drive`);
+  } catch (e) {
+    showError(e);
+  }
+});
 document.getElementById('switch')?.addEventListener('click', () => {
   storage = null;
   workspace = null;

@@ -89,6 +89,8 @@ button:disabled, select:disabled, input:disabled { opacity: 0.6; cursor: default
 .spacer { flex: 1; }
 .when-connected { display: none; }
 body.connected .when-connected { display: inline-block; }
+.when-grant { display: none; }
+body.connected.can-grant .when-grant { display: inline-block; }
 
 .layout { flex: 1; display: flex; min-height: 0; }
 
@@ -223,6 +225,9 @@ textarea.editor {
 .choice p { margin: 0; }
 .choice label { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--muted); width: 100%; }
 .choice input { width: 100%; color: var(--text); }
+.choice label[hidden] { display: none; }
+.choice label.check { flex-direction: row; align-items: baseline; gap: 6px; }
+.choice label.check input { width: auto; margin: 0; flex: none; }
 
 /* ---- toast ---- */
 
@@ -265,3 +270,9 @@ textarea.editor {
 .unavailable li:first-child { border-top: 0; }
 .unavailable li strong { color: var(--muted); font-weight: 600; }
 .unavailable li span { color: var(--muted); }
+
+.choice .note { margin: 0; padding: 6px 10px; border-left: 3px solid var(--warn); color: var(--text); font-size: 13px; }
+.choice details.own-id { width: 100%; font-size: 13px; }
+.choice details.own-id summary { cursor: pointer; color: var(--muted); }
+.choice details.own-id[open] summary { margin-bottom: 6px; }
+.choice details.own-id p { margin: 6px 0 0; }

@@ -11,7 +11,7 @@ dependencies. You, the browser UI and AI agents all edit the same files.
 - **Serverless** — there is no Taski backend. Your browser talks directly to where your
   files live: your disk or your own Google Drive.
 - **Privacy first** — no analytics, tracking or cookies, and no third-party scripts
-  (Google's sign-in script loads only if you choose Drive).
+  (Google's sign-in and Picker scripts load only if you choose Drive).
 - **Offline** — with a local folder or `server.py`, nothing leaves your computer.
 
 Try it:
@@ -113,7 +113,7 @@ your tasks could be collected.
   `server.py` listens only on 127.0.0.1.
 - **Google Drive** access goes straight from your browser to Google's API. The access
   token stays in the page's memory and is never saved. Signing in loads Google's sign-in
-  script; no other third-party code is ever loaded.
+  script, and “Add from Drive” loads the Google Picker; no other third-party code is ever loaded.
 - **Stored in your browser** (local storage, never sent anywhere): which storage you
   picked, the Drive client ID and folder name, and the web-folder URL. A chosen local
   folder is remembered in IndexedDB so you can reopen it.
@@ -167,23 +167,104 @@ The full rules for agents are in [taski-demo/AGENTS.md](./taski-demo/AGENTS.md).
 
 ## Google Drive setup
 
-Drive mode needs your own OAuth client ID:
+### Two levels of access
+Which files Taski can see depends on whose Google client you sign in with:
+
+| | Taski's client (published app) | Your own client ID |
+|---|---|---|
+| Scope | `drive.file` | `drive` (option on by default) |
+| Who can sign in | anyone, once the app is published | you and up to 100 test users you add |
+| Files added by agents or other apps | hidden until you use **Add from Drive** | ✅ visible on refresh |
+| Google review | none: `drive.file` is non-sensitive | none, while the client stays in testing mode |
+
+The full `drive` scope is restricted: to offer it to everyone, Google requires a
+verification that can take weeks and may need a yearly security assessment. A client in
+testing mode may use it for its own test users without that, so Taski's published client
+uses `drive.file` and your own client can see everything. Google may ask testing-mode
+users to sign in again after about a week. Taski has no server either way: the access
+token stays in your browser's memory.
+
+### What `drive.file` can see
+With Taski's client, Google shows Taski just:
+
+- files and folders **Taski created**, such as projects and tasks added in the app, even
+  after you or an agent edit them elsewhere;
+- existing files and folders **you add** with **Add from Drive** in the top bar, which
+  opens the Google Picker in the workspace folder.
+
+Anything else stays hidden, including Markdown files that agents, Drive for desktop or
+another app add to the workspace later. To show them, use **Add from Drive** and select
+them, and also the folders they are in, since Taski finds files by walking folders. Files
+saved by deleting and recreating them get a new ID and must be added again. Taski finds
+its workspace folder (default `taski`) the same way, so an existing folder of that name
+that Taski didn't create is not used: Taski creates its own next to it. Add the existing
+one's contents with **Add from Drive**, or pick another folder name. If you need agents
+to drop files in, use your own client ID.
+
+### Setting up Taski's client (published app)
+The published app (https://stan-kondrat.github.io/taski/app/ and `/demo/`) comes with
+Taski's Google OAuth client. The downloads and local copies don't include it. In
+[Google Cloud Console](https://console.cloud.google.com/):
+
+1. Enable the **Google Drive API** and the **Google Picker API**.
+2. **Google Auth Platform → Clients:** a **Web application** client whose only authorized
+   JavaScript origin is `https://stan-kondrat.github.io`, matching `DRIVE_ORIGINS` in
+   [`taski_src/config.js`](./taski_src/config.js).
+3. **Google Auth Platform → Data access:** only the scope `.../auth/drive.file`.
+4. **APIs & Services → Credentials → Create credentials → API key**, for the Picker:
+   - Application restrictions → **Websites**: `https://stan-kondrat.github.io/*` and
+     `https://docs.google.com/*`. The Picker runs in a docs.google.com frame and fails
+     with "API developer key is invalid" without it.
+   - API restrictions: **Google Picker API** and **Google Drive API**.
+5. **Google Auth Platform → Audience:** while the status is **Testing**, only test users
+   can sign in. **Publish app** to let anyone sign in.
+6. Add the client ID and the API key as the repository secrets `DRIVE_CLIENT_ID` and
+   `DRIVE_API_KEY` (see below).
+
+The API key is public by nature, like the client ID: it ends up in the page's JavaScript.
+It only identifies the project for quota and gives no access to anyone's files; the
+restrictions above stop other sites and other APIs from using it. Don't reuse it for
+paid APIs.
+
+### Using your own client
+Anywhere else (a download served on `localhost`, `server.py`, your own domain), or to let
+Taski see files that agents add, open **Use your own client ID** on the start screen. The
+settings are remembered in that browser. For files on your own computer, a local folder
+or `server.py` is usually simpler than Drive.
 
 1. In [Google Cloud Console](https://console.cloud.google.com/), create a project and enable the **Google Drive API**.
-2. Set up the OAuth consent screen in testing mode and add your Google account as a test user.
-3. Create an OAuth client of type **Web application**. Add your site as an authorized
-   JavaScript origin, for example `https://stan-kondrat.github.io` and `http://127.0.0.1:8000`.
-4. Put the client ID in [`taski_src/config.js`](./taski_src/config.js), or paste it on the start screen (it is remembered in that browser).
+2. **Google Auth Platform → Audience:** user type External, status **Testing**, and add
+   your Google account as a test user. Keep it in testing mode.
+3. **Clients:** create a **Web application** client. Add every address you open Taski on
+   as an authorized JavaScript origin: scheme, host and port, no path, e.g. `http://localhost:8123`.
+   No redirect URI is needed.
+4. **Data access:** add the scope `.../auth/drive`.
 
-Taski asks for the full `drive` scope so it can see Markdown files that you or
-agents created outside the app. Taski has no server: the access token stays in your browser.
+On the start screen, leave **See every file in the folder** on. To use `drive.file`
+instead (for example to publish your own copy), turn it off, add the `.../auth/drive.file`
+scope, and for **Add from Drive** create an API key as in step 4 of the previous section,
+with your own addresses, and paste it next to the client ID.
+
+### How the client ID and API key get into builds
+Neither is in the repository: `DRIVE_CLIENT_ID` and `DRIVE_API_KEY` in `config.js` are
+empty. CI fills them in from the repository secrets **`DRIVE_CLIENT_ID`** and
+**`DRIVE_API_KEY`** (Settings → Secrets and variables → Actions) when it builds the
+published `/app/` and `/demo/`; see `scripts/build-dist.py`. Neither is really secret,
+though: both end up readable in the published JavaScript, and what protects them is the
+list of allowed origins and the key's restrictions. Running from a clone, set them yourself:
+
+```bash
+TASKI_DRIVE_CLIENT_ID=….apps.googleusercontent.com TASKI_DRIVE_API_KEY=AIza… scripts/build-site.sh
+```
+
+or paste them on the start screen.
 
 ## Repository layout
 
 ```
 taski.html              the app (single entry page)
 taski_src/              plain scripts + CSS; each file adds itself to window.Taski
-  config.js             version, Drive client ID, default folders
+  config.js             version, Drive client ID and API key, default folders
   app.js                startup, storage selection, routing
   markdown.js           frontmatter, sections, checklists, renderer
   projects.js, tasks.js workspace model

@@ -5,8 +5,11 @@
   version we support).
 - **Readable code is a feature. Never minify or transform it.** The only build step,
   `scripts/build-dist.py`, copies files verbatim into a single `taski.html` and a zip.
-  Its one edit: `DEMO_WORKSPACE` in `config.js` stays relative (`./taski-demo/`) in the
-  source and becomes the public demo URL in the single file and the `/app/` site copy.
+  It edits only these values in `config.js`: `DEMO_WORKSPACE` stays relative (`./taski-demo/`)
+  in the source and becomes the public demo URL in the single file and `/app/`;
+  `DRIVE_CLIENT_ID` and `DRIVE_API_KEY` are empty in the source and filled in from the
+  GitHub secrets of the same names (env `TASKI_DRIVE_CLIENT_ID`, `TASKI_DRIVE_API_KEY`)
+  only in the published `/app/` and `/demo/`; downloads keep them empty. Never commit them.
 - Frontend: `taski.html` + classic scripts in `taski_src/` (not ES modules, so the
   downloaded folder works when opened from disk). Each file is wrapped in
   `(function (Taski) { ... })(window.Taski = window.Taski || {});`, takes what it needs

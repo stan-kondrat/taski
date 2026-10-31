@@ -1,6 +1,15 @@
 // Google Drive: OAuth through Google Identity Services, files through the
 // Drive v3 REST API. Workspace paths map to file IDs by walking folder names
 // from a root folder (default `taski` in My Drive).
+//
+// Two levels of access:
+// - `drive.file` (Taski's published client): Taski sees the files and folders it
+//   created, plus those the user hands it in the Google Picker ("Add from Drive").
+//   Google treats that scope as non-sensitive, so the app can be public without
+//   a security review. Files that agents or other apps add stay hidden until picked.
+// - `drive` (your own client ID): Taski sees everything in the workspace folder.
+//   The scope is restricted; a client in testing mode may use it for its own test
+//   users without Google's verification.
 
 (function (Taski) {
 'use strict';
@@ -8,9 +17,8 @@
 const { ConflictError, NotFoundError } = Taski.storage;
 const { normalize } = Taski.path;
 
-// Full Drive scope so Taski can see Markdown files created by you or agents,
-// not only files it created itself (which is all `drive.file` allows).
-const SCOPE = 'https://www.googleapis.com/auth/drive';
+const SCOPE_FILE = 'https://www.googleapis.com/auth/drive.file';
+const SCOPE_FULL = 'https://www.googleapis.com/auth/drive';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
 const FOLDER = 'application/vnd.google-apps.folder';
@@ -30,6 +38,40 @@ function loadGis() {
   return gisLoading;
 }
 
+/** Load the Google Picker (through Google's api.js loader) once. */
+let pickerLoading = null;
+function loadPicker() {
+  // @ts-ignore
+  if (window.google?.picker) return Promise.resolve();
+  pickerLoading ??= new Promise((resolve, reject) => {
+    const fail = () => {
+      pickerLoading = null;
+      reject(new Error('Could not load the Google Picker. Check your connection.'));
+    };
+    const s = document.createElement('script');
+    s.src = 'https://apis.google.com/js/api.js';
+    // @ts-ignore
+    s.onload = () => window.gapi.load('picker', { callback: () => resolve(undefined), onerror: fail });
+    s.onerror = fail;
+    document.head.append(s);
+  });
+  return pickerLoading;
+}
+
+/**
+ * Plain-language message for a failed Google sign-in popup.
+ * Google shows problems such as an unregistered address (origin_mismatch)
+ * inside the popup and only reports that it was closed, so say so.
+ * @param {string | undefined} type
+ */
+function signInError(type) {
+  if (type === 'popup_failed_to_open') return 'The browser blocked Google’s sign-in window. Allow pop-ups for this site and try again.';
+  if (type === 'popup_closed') {
+    return `Google sign-in was closed before it finished. If Google said “origin_mismatch” or “Access blocked”, this address (${location.origin}) isn’t allowed for this client ID: use your own client ID, or open Taski on an allowed address.`;
+  }
+  return 'Google sign-in failed. Try again.';
+}
+
 /** @param {string} s */
 const q = (s) => `'${s.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 
@@ -38,9 +80,15 @@ const q = (s) => `'${s.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
  * first time, because Google opens a popup.
  * @param {string} clientId   OAuth client ID (Web application) from Google Cloud.
  * @param {string} rootPath   Folder path in My Drive, e.g. `taski` or `Work/taski`.
+ * @param {Object} [opts]
+ * @param {boolean} [opts.fullAccess]  Ask for the whole Drive (`drive`) instead of
+ *   only Taski's own and picked files (`drive.file`).
+ * @param {string} [opts.apiKey]  API key of the same Google Cloud project, for the
+ *   Picker. Only used with `drive.file`.
  * @returns {Promise<import('./storage.js').Storage>}
  */
-async function driveStorage(clientId, rootPath = 'taski') {
+async function driveStorage(clientId, rootPath = 'taski', { fullAccess = false, apiKey = '' } = {}) {
+  const scope = fullAccess ? SCOPE_FULL : SCOPE_FILE;
   await loadGis();
   /** @type {string} */
   let token = '';
@@ -51,9 +99,19 @@ async function driveStorage(clientId, rootPath = 'taski') {
       // @ts-ignore
       const client = window.google.accounts.oauth2.initTokenClient({
         client_id: clientId,
-        scope: SCOPE,
-        callback: (/** @type {any} */ r) => (r.error ? reject(new Error(r.error_description || r.error)) : resolve(r.access_token)),
-        error_callback: (/** @type {any} */ e) => reject(new Error(e.message || e.type || 'Sign-in cancelled')),
+        scope,
+        callback: (/** @type {any} */ r) => {
+          if (r.error) return reject(new Error(r.error_description || r.error));
+          // Google lets people untick a permission on the consent screen.
+          // @ts-ignore
+          if (!window.google.accounts.oauth2.hasGrantedAllScopes(r, scope)) {
+            return reject(new Error(fullAccess
+              ? 'Google didn’t give Taski access to your Drive. Sign in again and allow it, and check that your client has the “…/auth/drive” scope under Data access.'
+              : 'Google didn’t give Taski access to its Drive files. Sign in again and allow it.'));
+          }
+          resolve(r.access_token);
+        },
+        error_callback: (/** @type {any} */ e) => reject(new Error(signInError(e && e.type))),
       });
       client.requestAccessToken({ prompt });
     });
@@ -114,6 +172,42 @@ async function driveStorage(clientId, rootPath = 'taski') {
   ids.set('', { id: rootId, kind: 'dir' });
 
   /**
+   * Let the user pick existing files and folders for Taski to see, starting in
+   * the workspace folder. Resolves with how many were picked (0 if cancelled).
+   * @returns {Promise<number>}
+   */
+  async function grantAccess() {
+    await loadPicker();
+    // @ts-ignore
+    const picker = window.google.picker;
+    const view = new picker.DocsView(picker.ViewId.DOCS)
+      .setParent(rootId)
+      .setIncludeFolders(true)
+      .setSelectFolderEnabled(true)
+      .setMimeTypes(`text/markdown,text/x-markdown,text/plain,application/octet-stream,${FOLDER}`);
+    const picked = await new Promise((resolve) => {
+      const builder = new picker.PickerBuilder()
+        .setTitle('Add Markdown files and folders to Taski')
+        .addView(view)
+        .enableFeature(picker.Feature.MULTISELECT_ENABLED)
+        .setOAuthToken(token)
+        // The project number, which starts the client ID. Picked files are
+        // granted to this app.
+        .setAppId(clientId.split('-')[0])
+        .setOrigin(location.origin)
+        .setCallback((/** @type {any} */ data) => {
+          if (data.action === picker.Action.PICKED) resolve(data.docs.length);
+          else if (data.action === picker.Action.CANCEL) resolve(0);
+        });
+      if (apiKey) builder.setDeveloperKey(apiKey);
+      builder.build().setVisible(true);
+    });
+    // Folder lookups made before the grant may have come back empty.
+    for (const key of [...ids.keys()]) if (key) ids.delete(key);
+    return picked;
+  }
+
+  /**
    * @param {string} path
    * @param {boolean} [createDirs]  Create missing folders along the way.
    */
@@ -147,6 +241,8 @@ async function driveStorage(clientId, rootPath = 'taski') {
     label: `Google Drive: /${normalize(rootPath)}`,
     canWrite: true,
     canList: true,
+    // With full access there is nothing to grant.
+    grantAccess: fullAccess ? undefined : grantAccess,
     async list(path) {
       const dir = await resolve(path);
       const entries = [];

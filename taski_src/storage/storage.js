@@ -33,6 +33,8 @@
  * @property {(path: string) => Promise<FileData>} read
  * @property {(path: string, text: string, opts?: WriteOptions) => Promise<{rev: string}>} write
  * @property {(path: string) => Promise<void>} mkdir
+ * @property {() => Promise<number>} [grantAccess]  Drive only: let the user pick existing
+ *   files for Taski to see; resolves with how many were picked.
  */
 
 class NotFoundError extends Error {

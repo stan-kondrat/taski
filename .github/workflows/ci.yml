@@ -50,6 +50,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Build site
+        env:
+          # Google OAuth client ID and Picker API key for /app/ and /demo/ (repository secrets).
+          TASKI_DRIVE_CLIENT_ID: ${{ secrets.DRIVE_CLIENT_ID }}
+          TASKI_DRIVE_API_KEY: ${{ secrets.DRIVE_API_KEY }}
         run: scripts/build-site.sh _site
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5

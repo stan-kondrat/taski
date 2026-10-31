@@ -3,16 +3,25 @@
 
     dist/taski.html   one self-contained file: taski.html with every <script src>
                       and the stylesheet pasted in verbatim. Nothing is minified or
-                      renamed; each block is labelled with its source file. The one
-                      change: DEMO_WORKSPACE in config.js points at the public demo,
-                      because the relative ./taski-demo/ does not exist next to it.
-    dist/taski.zip    the readable source exactly as it is in the repo: taski.html,
+                      renamed; each block is labelled with its source file.
+    dist/taski.zip    the readable source as it is in the repo: taski.html,
                       taski_src/, server.py, the sample workspace, README and LICENSE.
+
+The only edits are values in config.js:
+    DEMO_WORKSPACE    single file and /app/ only: the public demo URL, because the
+                      relative ./taski-demo/ does not exist next to them.
+    DRIVE_CLIENT_ID   /app/ and /demo/ only, from the TASKI_DRIVE_CLIENT_ID and
+    DRIVE_API_KEY     TASKI_DRIVE_API_KEY environment variables when set (CI passes the
+                      DRIVE_CLIENT_ID and DRIVE_API_KEY secrets). Taski's Google client
+                      only allows the published site, so the downloads keep them empty
+                      and ask for your own client ID.
 
 Usage:
     python3 scripts/build-dist.py [output-dir]          (default: dist)
-    python3 scripts/build-dist.py --publish-config FILE  rewrite DEMO_WORKSPACE in a
-                                                         copied config.js (used for /app/)
+    python3 scripts/build-dist.py --publish-config FILE  apply both edits to a copied
+                                                         config.js (used for /app/)
+    python3 scripts/build-dist.py --drive-config FILE    only fill in the Drive values
+                                                         (used for /demo/)
 """
 
 import os
@@ -24,6 +33,11 @@ import zipfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PUBLIC_DEMO_URL = "https://stan-kondrat.github.io/taski/demo/taski-demo/"
 DEMO_LINE = "const DEMO_WORKSPACE = './taski-demo/';"
+# config.js line → (environment variable, pattern its value must match)
+DRIVE_VALUES = {
+    "DRIVE_CLIENT_ID": ("TASKI_DRIVE_CLIENT_ID", r"[\w-]+\.apps\.googleusercontent\.com"),
+    "DRIVE_API_KEY": ("TASKI_DRIVE_API_KEY", r"AIza[\w-]{30,}"),
+}
 ZIP_CONTENTS = ["taski.html", "taski_src", "taski-demo", "server.py", "README.md", "LICENSE", "AGENTS.md"]
 
 
@@ -35,11 +49,32 @@ def version():
     return m.group(1)
 
 
-def publish_config(text):
+def set_drive_values(text):
+    """Fill in the Drive client ID and API key from the environment, where set.
+    Fails if a config.js line has changed or a value looks wrong."""
+    for name, (env, pattern) in DRIVE_VALUES.items():
+        line = "const %s = '';" % name
+        if line not in text:
+            sys.exit("config.js no longer contains: %s" % line)
+        value = os.environ.get(env, "").strip()
+        if not value:
+            continue
+        if not re.fullmatch(pattern, value):
+            sys.exit("%s does not look like a Google %s" % (env, name))
+        text = text.replace(line, "const %s = '%s'; // set by scripts/build-dist.py from CI" % (name, value))
+    return text
+
+
+def set_demo_url(text):
     """Point DEMO_WORKSPACE at the public demo. Fails if the line has changed."""
     if DEMO_LINE not in text:
         sys.exit("config.js no longer contains: %s" % DEMO_LINE)
     return text.replace(DEMO_LINE, "const DEMO_WORKSPACE = '%s'; // set by scripts/build-dist.py" % PUBLIC_DEMO_URL)
+
+
+def publish_config(text):
+    """config.js for /app/: the public demo URL and the Drive values."""
+    return set_drive_values(set_demo_url(text))
 
 
 def read_source(rel):
@@ -63,7 +98,7 @@ def single_file(ver):
         rel = m.group(1)
         text = read_source(rel)
         if rel == "taski_src/config.js":
-            text = publish_config(text)
+            text = set_demo_url(text)
         return "<script>\n// ---- %s ----\n%s\n</script>" % (rel, text)
 
     html, styles = re.subn(r'<link rel="stylesheet" href="([^"]+)">', style, html)
@@ -97,9 +132,10 @@ def add_tree(zf, rel, prefix):
 
 
 def main():
-    if len(sys.argv) == 3 and sys.argv[1] == "--publish-config":
+    if len(sys.argv) == 3 and sys.argv[1] in ("--publish-config", "--drive-config"):
+        edit = publish_config if sys.argv[1] == "--publish-config" else set_drive_values
         with open(sys.argv[2], encoding="utf-8") as f:
-            text = publish_config(f.read())
+            text = edit(f.read())
         with open(sys.argv[2], "w", encoding="utf-8") as f:
             f.write(text)
         return
