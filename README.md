@@ -221,6 +221,11 @@ Taski's Google OAuth client. The downloads and local copies don't include it. In
 6. Add the client ID and the API key as the repository secrets `DRIVE_CLIENT_ID` and
    `DRIVE_API_KEY` (see below).
 
+Taski needs only the client ID: sign-in runs entirely in the browser through Google
+Identity Services' token client, with no redirect URI and no client secret. Don't put the
+**client secret** (or the downloaded `client_secret_….json`) anywhere in the repository,
+its secrets or the site; it is confidential, and `.gitignore` skips that file.
+
 The API key is public by nature, like the client ID: it ends up in the page's JavaScript.
 It only identifies the project for quota and gives no access to anyone's files; the
 restrictions above stop other sites and other APIs from using it. Don't reuse it for
@@ -299,7 +304,9 @@ scripts/run-js-tests.sh "/Applications/Google Chrome.app/Contents/MacOS/Google C
 
 `.github/workflows/ci.yml` runs the Python and JavaScript tests on every push and pull
 request. On `main`, once the tests pass, it builds the site with `scripts/build-site.sh` and
-publishes it to GitHub Pages.
+publishes it to GitHub Pages. The published `/app/` and `/demo/` pages load their scripts
+and stylesheet as `taski_src/…?v=<hash of the files>`, so browsers, which may cache each file
+for 10 minutes, never mix files from two deploys.
 
 One-time setup: in the repository settings, set **Pages → Build and deployment → Source**
 to **GitHub Actions**.

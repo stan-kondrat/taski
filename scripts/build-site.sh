@@ -26,6 +26,16 @@ cp -R taski-demo "$out/demo/taski-demo"
 python3 scripts/build-dist.py --publish-config "$out/app/taski_src/config.js"
 python3 scripts/build-dist.py --drive-config "$out/demo/taski_src/config.js"
 
+# GitHub Pages lets browsers cache each file for 10 minutes, each on its own timer, so
+# right after a deploy a returning visitor could get new HTML with old scripts or the
+# other way round. Tag the script and stylesheet URLs with a hash of the copy's files,
+# so every page loads one matching set. The files themselves stay as they are.
+for dir in app demo; do
+  stamp=$(cd "$out/$dir" && find taski_src -type f | sort | xargs cat | python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:10])')
+  sed -i.bak -E "s#(src|href)=\"(taski_src/[^\"]+)\"#\1=\"\2?v=$stamp\"#g" "$out/$dir/index.html"
+  rm "$out/$dir/index.html.bak"
+done
+
 # Downloads, built from the same files, and their details on the releases page.
 python3 scripts/build-dist.py "$out/releases" >/dev/null
 version=$(cat "$out/releases/VERSION")

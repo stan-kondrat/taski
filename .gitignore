@@ -3,3 +3,5 @@ _site/
 __pycache__/
 dist/
 _preview/
+# Google OAuth client secrets: Taski never uses them, never commit one
+client_secret*.json

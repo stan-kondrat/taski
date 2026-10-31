@@ -10,6 +10,8 @@
   `DRIVE_CLIENT_ID` and `DRIVE_API_KEY` are empty in the source and filled in from the
   GitHub secrets of the same names (env `TASKI_DRIVE_CLIENT_ID`, `TASKI_DRIVE_API_KEY`)
   only in the published `/app/` and `/demo/`; downloads keep them empty. Never commit them.
+  `scripts/build-site.sh` also adds `?v=<hash>` to the script and stylesheet URLs in the
+  published pages so browsers never mix cached old files with new ones.
 - Frontend: `taski.html` + classic scripts in `taski_src/` (not ES modules, so the
   downloaded folder works when opened from disk). Each file is wrapped in
   `(function (Taski) { ... })(window.Taski = window.Taski || {});`, takes what it needs
