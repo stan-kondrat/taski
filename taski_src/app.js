@@ -4,7 +4,8 @@
 'use strict';
 
 const { DRIVE_CLIENT_ID, DRIVE_API_KEY, DRIVE_ORIGINS, DRIVE_ROOT, LOCAL_WORKSPACE, DEMO_WORKSPACE, VERSION } = Taski.config;
-const { createProject, loadWorkspace } = Taski.projects;
+const { createProject, loadWorkspace, setProjectFields } = Taski.projects;
+const { attach, attachPath, canPreview, createNote, fileKind } = Taski.files;
 const { driveStorage } = Taski.drive;
 const { ensurePermission, filesystemStorage, filesystemSupported, hasPermission, pickFolder, rememberedFolder } = Taski.filesystem;
 const { httpStorage } = Taski.http;
@@ -15,7 +16,7 @@ const { supported: pickedSupported, pickedStorage, chooseFolderFiles } = Taski.p
 const { ConflictError } = Taski.storage;
 const { createTask, loadTask, saveTask, setTaskCheck, setTaskField } = Taski.tasks;
 const { h } = Taski.dom;
-const { fileView, overviewView, projectHref, projectView, taskHref, taskView } = Taski.views;
+const { fileHref, fileView, isOpen, overviewView, projectHref, projectView, taskHref, taskView } = Taski.views;
 
 const main = /** @type {HTMLElement} */ (document.getElementById('main'));
 const sidebar = /** @type {HTMLElement} */ (document.getElementById('sidebar'));
@@ -31,8 +32,15 @@ let storage = null;
 /** @type {import('./projects.js').Workspace | null} */
 let workspace = null;
 let editing = false;
-/** @type {Map<string, {filter: string, query: string}>} */
+/** Open the next page in the editor, e.g. a note that was just created. */
+let editNext = false;
+/** @type {Map<string, import('./ui/views.js').ListUi>} */
 const listUi = new Map();
+/** @param {string} path */
+function uiFor(path) {
+  if (!listUi.has(path)) listUi.set(path, { filter: 'open', query: '', labels: [], layout: 'list' });
+  return /** @type {import('./ui/views.js').ListUi} */ (listUi.get(path));
+}
 
 // ---- settings kept in this browser only ----
 
@@ -461,7 +469,7 @@ function renderSidebar() {
   sidebar.replaceChildren(
     h('a.home', { href: '#/', class: here === '' || here === '#/' ? 'on' : '' }, workspace.title),
     h('ul', null, workspace.projects.map((p) => {
-      const open = p.tasks.filter((t) => t.status !== 'done' && t.status !== 'cancelled').length;
+      const open = p.tasks.filter((t) => isOpen(t, p)).length;
       const on = here.startsWith(`#/p/${p.path}`) || p.tasks.some((t) => here === `#/t/${t.path}`);
       return h('li', null, h('a', { href: projectHref(p.path), class: on ? 'on' : '' },
         h('span', null, p.title), open ? h('span.count', null, open) : null));
@@ -515,6 +523,57 @@ function ctx() {
       } catch (e) {
         showError(e);
       }
+    },
+    setProjectFields: async (project, fields) => {
+      try {
+        await setProjectFields(/** @type {any} */ (storage), project, fields);
+        notify('Saved');
+        await refresh();
+      } catch (e) {
+        showError(e);
+      }
+    },
+    attach: async (owner, target, title) => {
+      try {
+        await attach(/** @type {any} */ (storage), owner, target, title);
+        await refresh();
+      } catch (e) {
+        showError(e);
+        throw e;
+      }
+    },
+    attachPath: async (owner, path) => {
+      try {
+        await attachPath(/** @type {any} */ (storage), owner, path);
+        await refresh();
+      } catch (e) {
+        showError(e);
+      }
+    },
+    createNote: async (owner, title) => {
+      try {
+        const path = await createNote(/** @type {any} */ (storage), owner, title);
+        await refreshData();
+        editNext = true;
+        location.hash = fileHref(path);
+      } catch (e) {
+        showError(e);
+      }
+    },
+    moveStatus: async (project, from, to) => {
+      try {
+        for (const t of project.tasks.filter((x) => x.status === from)) await setTaskField(/** @type {any} */ (storage), t, 'status', to);
+        notify(`Moved ${from} to ${to}`);
+      } catch (e) {
+        showError(e);
+      }
+      await refresh();
+    },
+    showLabel: (project, label) => {
+      const ui = uiFor(project.path);
+      ui.labels = [label];
+      if (location.hash === projectHref(project.path)) route();
+      else location.hash = projectHref(project.path);
     },
     saveFile: async (path, text, rev) => {
       try {
@@ -571,8 +630,7 @@ async function route() {
   if (kind === 'p') {
     const project = workspace.projects.find((p) => p.path === path);
     if (!project) return notFound(path);
-    if (!listUi.has(path)) listUi.set(path, { filter: 'open', query: '' });
-    view = projectView(c, project, /** @type {any} */ (listUi.get(path)));
+    view = projectView(c, project, uiFor(path));
     document.title = `${project.title} · Taski`;
   } else if (kind === 't') {
     const project = workspace.projects.find((p) => p.tasks.some((t) => t.path === path));
@@ -587,11 +645,13 @@ async function route() {
     view = taskView(c, task, project, editUi);
     document.title = `${task.title} · Taski`;
   } else if (kind === 'f') {
-    let file;
-    try {
-      file = await storage.read(path);
-    } catch {
-      return notFound(path);
+    let file = null;
+    if (canPreview(fileKind(path))) {
+      try {
+        file = await storage.read(path);
+      } catch {
+        return notFound(path);
+      }
     }
     view = fileView(c, path, file, editUi);
     document.title = `${path} · Taski`;
@@ -608,7 +668,8 @@ function notFound(path) {
 }
 
 window.addEventListener('hashchange', () => {
-  editing = false;
+  editing = editNext;
+  editNext = false;
   renderSidebar();
   route();
   main.scrollTo?.(0, 0);

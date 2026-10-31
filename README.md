@@ -157,8 +157,34 @@ tags: kubernetes, raspberry-pi
 ```
 
 - Frontmatter is a strict subset of YAML: one `key: value` per line, no nesting.
-- `status`: `todo`, `doing`, `blocked`, `done`, `cancelled`. `priority`: `low`, `normal`, `high`. Dates: `YYYY-MM-DD`.
+- `status`: `todo`, `doing`, `blocked`, `done`, `cancelled`, unless the project sets its own
+  (below). `priority`: `low`, `normal`, `high`. Dates: `YYYY-MM-DD`. `tags`: the task's labels.
 - The first `# Heading` is the title. Unknown fields and all other text are kept as they are.
+- `## Files` in a task or project README links its documents: relative paths or URLs.
+  Taski lists them with previews, next to unlinked files it finds in the same folder.
+
+### Project statuses and labels
+
+Each project can have its own workflow, set in its README frontmatter (or under
+**Settings** on the project page):
+
+```markdown
+---
+type: project
+status: active
+statuses: backlog, todo, doing, review, done, cancelled
+active-statuses: doing, review
+closed-statuses: done, cancelled
+labels: bug, idea, research
+---
+```
+
+- `statuses` is the order of the board columns and of the list.
+- `active-statuses` are "in progress": shown first and under **Focus** (default `doing`).
+- `closed-statuses` are finished: hidden from open tasks (default `done` and `cancelled`,
+  or the last status).
+- `labels` are suggested when labelling tasks; labels tasks already use are added.
+- New tasks get the first status that is neither active nor closed.
 - Plain web hosting can't list folders, so `## Projects` and `## Tasks` links are how
   projects and tasks are found there. Taski adds these links when it creates something.
   Drive, local folders and `server.py` also find unlinked tasks inside `tasks/`.
@@ -272,7 +298,8 @@ taski_src/              plain scripts + CSS; each file adds itself to window.Tas
   config.js             version, Drive client ID and API key, default folders
   app.js                startup, storage selection, routing
   markdown.js           frontmatter, sections, checklists, renderer
-  projects.js, tasks.js workspace model
+  projects.js, tasks.js workspace model, project statuses and labels
+  files.js              attached documents (`## Files` links, notes)
   storage/              drive.js, http.js, filesystem.js, python.js, scoped.js (subfolder)
   ui/                   views
 server.py               optional local read/write server (Python 3.9+, standard library)

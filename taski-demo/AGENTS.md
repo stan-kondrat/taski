@@ -18,10 +18,34 @@ no nesting, no multi-line values, no duplicate keys.
 | `priority` | `low` `normal` `high`                         |
 | `due`      | `YYYY-MM-DD`                                  |
 | `created`  | `YYYY-MM-DD`                                  |
-| `tags`     | comma-separated words                         |
+| `tags`     | task labels, comma-separated                  |
+
+A project README may set its own task statuses and labels:
+
+| key               | meaning                                                         |
+|-------------------|-----------------------------------------------------------------|
+| `statuses`        | the project's task statuses, in board order                     |
+| `active-statuses` | statuses that mean "in progress" (default `doing`)              |
+| `closed-statuses` | statuses that mean finished (default `done`, `cancelled`, else the last one) |
+| `labels`          | suggested task labels, comma-separated                          |
+
+```
+statuses: backlog, todo, doing, review, done, cancelled
+active-statuses: doing, review
+labels: bug, idea, research
+```
+
+Without `statuses` a project uses `todo doing blocked done cancelled`. Use only the
+project's statuses in its tasks. New tasks start in the first status that is neither
+active nor closed.
 
 The first `# Heading` is the title. Everything else is free Markdown. Checklists use
-`- [ ]` and `- [x]`. A task's `## Files` section links related documents with relative paths.
+`- [ ]` and `- [x]`.
+
+Attached documents: a task's or project's `## Files` section links related files with
+relative paths, or full URLs for outside documents. Put a folder task's files in its
+folder; for a single-file task use `<project>/files/<task>/`. Project documents can live
+anywhere in the project folder outside `tasks/`. Add a link for every file you add.
 
 When editing:
 

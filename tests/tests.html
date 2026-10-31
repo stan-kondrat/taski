@@ -24,6 +24,7 @@
   <script src="../taski_src/storage/picked.js"></script>
   <script src="../taski_src/tasks.js"></script>
   <script src="../taski_src/projects.js"></script>
+  <script src="../taski_src/files.js"></script>
   <script>
   (async function () {
     const md = Taski.markdown;
@@ -127,6 +128,152 @@
       const mk = (status, priority, title) => parseTask(`${title}.md`, `---\nstatus: ${status}\npriority: ${priority}\n---\n# ${title}`, '');
       const sorted = [mk('done', 'high', 'd'), mk('todo', 'low', 'c'), mk('todo', 'high', 'b'), mk('doing', 'low', 'a')].sort(compareTasks);
       eq(sorted.map((t) => t.title), ['a', 'b', 'c', 'd']);
+    });
+
+    test('workflowFrom: defaults, custom statuses, closed and initial', () => {
+      const { workflowFrom, DEFAULT_WORKFLOW, statusKind } = Taski.tasks;
+      eq(DEFAULT_WORKFLOW.statuses, ['todo', 'doing', 'blocked', 'done', 'cancelled']);
+      eq([[...DEFAULT_WORKFLOW.active], [...DEFAULT_WORKFLOW.closed], DEFAULT_WORKFLOW.initial], [['doing'], ['done', 'cancelled'], 'todo']);
+      const wf = workflowFrom(new Map([['statuses', 'now, next, later, waiting, done, now'], ['active-statuses', 'now, nope']]));
+      eq([wf.statuses, [...wf.active], [...wf.closed], wf.initial], [['now', 'next', 'later', 'waiting', 'done'], ['now'], ['done'], 'next']);
+      const last = workflowFrom(new Map([['statuses', 'idea, building, shipped']]));
+      eq([[...last.active], [...last.closed], last.initial], [[], ['shipped'], 'idea']);
+      const set = workflowFrom(new Map([['statuses', 'a, b, c'], ['closed-statuses', 'b, c'], ['active-statuses', 'b']]));
+      eq([[...set.active], [...set.closed], statusKind(set, 'a'), statusKind(set, 'zzz')], [[], ['b', 'c'], 'open', 'open']);
+    });
+
+    test('compareTasks follows the project workflow', () => {
+      const { workflowFrom, taskComparator } = Taski.tasks;
+      const wf = workflowFrom(new Map([['statuses', 'backlog, todo, doing, review, done'], ['active-statuses', 'doing, review']]));
+      const mk = (status, title) => parseTask(`${title}.md`, `---\nstatus: ${status}\n---\n# ${title}`, '');
+      const sorted = [mk('done', 'e'), mk('weird', 'd'), mk('todo', 'c'), mk('backlog', 'b'), mk('review', 'a2'), mk('doing', 'a1')].sort(taskComparator(wf));
+      eq(sorted.map((t) => t.title), ['a1', 'a2', 'b', 'c', 'd', 'e']);
+    });
+
+    test('withoutSection drops a section for display only', () => {
+      eq(md.withoutSection('# T\n\nx\n\n## Files\n\n- [a](a.md)\n\n## More\n\ny\n', 'Files'), '# T\n\nx\n\n## More\n\ny\n');
+      eq(md.withoutSection('# T\n\n## Files\n\n- [a](a.md)\n', 'Files'), '# T\n');
+      const boxes = '# T\n\n## Files\n\n- [ ] a\n';
+      eq(md.withoutSection(boxes, 'Files'), boxes);
+      eq(md.withoutSection('# T\n', 'Files'), '# T\n');
+    });
+
+    /** In-memory storage that can list folders. */
+    const memStorage = (initial) => {
+      const files = new Map(Object.entries(initial));
+      let rev = 0;
+      return {
+        files,
+        kind: 'mem', label: 'Mem', canWrite: true, canList: true,
+        async list(dir) {
+          const prefix = dir ? `${dir}/` : '';
+          const out = new Map();
+          for (const p of files.keys()) {
+            if (!p.startsWith(prefix)) continue;
+            const [name, ...rest] = p.slice(prefix.length).split('/');
+            out.set(name, { name, path: prefix + name, kind: rest.length ? 'dir' : 'file' });
+          }
+          if (!out.size && dir) throw new Taski.storage.NotFoundError(dir);
+          return [...out.values()];
+        },
+        async read(p) {
+          if (!files.has(p)) throw new Taski.storage.NotFoundError(p);
+          return { text: files.get(p), rev: String(rev) };
+        },
+        async write(p, text, opts = {}) {
+          if (opts.create && files.has(p)) throw new Error(`exists: ${p}`);
+          files.set(p, text);
+          return { rev: String(++rev) };
+        },
+        async mkdir() {},
+      };
+    };
+
+    test('project workflow, labels and files load from the README', async () => {
+      const s = memStorage({
+        'README.md': '# WS\n\n## Projects\n\n- [P](./p/)\n',
+        'p/README.md': '---\ntype: project\nstatuses: next, now, done\nactive-statuses: now\nlabels: zeta, alpha\n---\n# P\n\n## Files\n\n- [Plan](./plan.md)\n- [Doc](https://docs.example.com/d)\n',
+        'p/tasks/a.md': '---\ntags: beta, alpha\n---\n# A\n',
+        'p/tasks/b.md': '---\nstatus: now\n---\n# B\n',
+        'p/plan.md': '# Plan\n',
+      });
+      const ws = await loadWorkspace(s);
+      const p = ws.projects[0];
+      eq(p.workflow.statuses, ['next', 'now', 'done']);
+      eq(p.labels, ['zeta', 'alpha', 'beta']);
+      eq(p.tasks.map((t) => `${t.title}:${t.status}`), ['B:now', 'A:next']);
+      eq(p.files.map((f) => f.path), ['p/plan.md', null]);
+      eq(p.warnings, []);
+      s.files.set('p/tasks/c.md', '---\nstatus: todo\n---\n# C\n');
+      const again = await Taski.projects.loadProject(s, 'p');
+      eq(again.warnings, ['Tasks use statuses this project does not list: todo. Move them under Settings.']);
+      eq(again.tasks.map((t) => t.title), ['B', 'A', 'C']);
+    });
+
+    test('setProjectFields edits the README in one write', async () => {
+      const s = memStorage({ 'p/README.md': '---\ntype: project\nowner: me\n---\n# P\n', 'p/tasks/a.md': '# A\n' });
+      const project = await Taski.projects.loadProject(s, 'p');
+      await Taski.projects.setProjectFields(s, project, { statuses: 'a, b', labels: '', owner: 'me' });
+      eq(s.files.get('p/README.md'), '---\ntype: project\nowner: me\nstatuses: a, b\n---\n# P\n');
+    });
+
+    test('listAttachments: linked first, then unlinked files in the folder', async () => {
+      const F = Taski.files;
+      const s = memStorage({
+        'p/README.md': '# P\n\n## Files\n\n- [Spec](./docs/spec.md)\n',
+        'p/docs/spec.md': '# Spec',
+        'p/docs/old.pdf': '%PDF',
+        'p/AGENTS.md': '# Rules',
+        'p/_templates/t.md': 'x',
+        'p/.hidden': 'x',
+        'p/tasks/a/README.md': '# A\n\n## Files\n\n- [Notes](./notes.md)\n- [Site](https://example.com/x)\n',
+        'p/tasks/a/notes.md': '# Notes',
+        'p/tasks/a/shot.png': 'png',
+      });
+      const project = await Taski.projects.loadProject(s, 'p');
+      const own = await F.listAttachments(s, F.projectOwner(project));
+      eq(own.map((a) => `${a.path}:${a.linked}:${a.kind}`), ['p/docs/spec.md:true:markdown', 'p/AGENTS.md:false:markdown', 'p/docs/old.pdf:false:pdf']);
+      const task = project.tasks[0];
+      const att = await F.listAttachments(s, F.taskOwner(task, project));
+      eq(att.map((a) => `${a.name}:${a.linked}:${a.kind}`), ['Notes:true:markdown', 'Site:true:link', 'shot.png:false:image']);
+    });
+
+    test('createNote and attach add links to ## Files', async () => {
+      const F = Taski.files;
+      const s = memStorage({
+        'p/README.md': '# P\n\n## Tasks\n\n- [S](./tasks/s.md)\n',
+        'p/tasks/s.md': '---\nstatus: todo\n---\n# S\n',
+        'p/tasks/f/README.md': '# F\n\nBody.\n',
+      });
+      const project = await Taski.projects.loadProject(s, 'p');
+      const single = project.tasks.find((t) => t.slug === 's');
+      const path = await F.createNote(s, F.taskOwner(single, project), 'Call log');
+      eq(path, 'p/files/s/call-log.md');
+      eq(s.files.get(path), '# Call log\n\n');
+      eq(s.files.get('p/tasks/s.md').endsWith('## Files\n\n- [Call log](../files/s/call-log.md)\n'), true);
+
+      const folder = project.tasks.find((t) => t.slug === 'f');
+      await F.attach(s, F.taskOwner(folder, project), 'https://docs.google.com/document/d/x', 'Brief');
+      const again = await Taski.tasks.loadTask(s, folder.path);
+      await F.attach(s, F.taskOwner(again, project), 'shots/a.png');
+      eq(s.files.get('p/tasks/f/README.md'), '# F\n\nBody.\n\n## Files\n\n- [Brief](https://docs.google.com/document/d/x)\n- [a.png](./shots/a.png)\n');
+      const third = await Taski.tasks.loadTask(s, folder.path);
+      eq((await F.createNote(s, F.taskOwner(third, project), 'Readme')), 'p/tasks/f/readme-2.md');
+
+      await F.attach(s, F.projectOwner(project), '../p/notes.md', 'Notes');
+      eq(s.files.get('p/README.md').endsWith('## Files\n\n- [Notes](./notes.md)\n'), true);
+      let escaped = false;
+      try { await F.attach(s, F.projectOwner(project), '../../x.md'); } catch { escaped = true; }
+      eq(escaped, true);
+    });
+
+    test('demo project with its own statuses', async () => {
+      const ws = await loadWorkspace(httpStorage('../taski-demo/'));
+      const dev = ws.projects.find((p) => p.path === 'taski-dev');
+      eq(dev.workflow.statuses, ['backlog', 'todo', 'doing', 'review', 'done', 'cancelled']);
+      eq([...dev.workflow.active], ['doing', 'review']);
+      eq(dev.tasks[0].status, 'doing');
+      eq(dev.files.length, 2);
     });
 
     test('scopedStorage maps paths into a subfolder', async () => {

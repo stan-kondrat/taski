@@ -23,7 +23,7 @@
 - `server.py`: standard library only. It binds to 127.0.0.1, keeps every path inside
   the workspace root (symlinks included), writes atomically and refuses stale writes.
 - Storage adapters (`taski_src/storage/`) move raw text only. Task and project meaning
-  lives in `markdown.js`, `tasks.js` and `projects.js`.
+  lives in `markdown.js`, `tasks.js`, `projects.js` and `files.js`.
 - Edits to Markdown files must change only the lines they need. Never rewrite a whole
   file from parsed data: unknown fields and free text must survive.
 - `taski-demo/` is the sample workspace and the published demo. Its format rules are in

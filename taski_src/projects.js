@@ -4,10 +4,10 @@
 (function (Taski) {
 'use strict';
 
-const { appendToSection, getTitle, parseFrontmatter, sectionLinks, slugify } = Taski.markdown;
+const { appendToSection, getTitle, parseFrontmatter, sectionLinks, setField, slugify } = Taski.markdown;
 const { basename, dirname, join, relativeLink, resolveRelative } = Taski.path;
 const { NotFoundError } = Taski.storage;
-const { compareTasks, loadTask } = Taski.tasks;
+const { loadTask, splitList, taskComparator, workflowFrom } = Taski.tasks;
 
 /**
  * @typedef {Object} FileText
@@ -22,6 +22,9 @@ const { compareTasks, loadTask } = Taski.tasks;
  * @property {FileText | null} readme
  * @property {string} title
  * @property {string} status
+ * @property {import('./tasks.js').Workflow} workflow  Task statuses, from `statuses` and friends.
+ * @property {string[]} labels    Labels from the README's `labels` field, then the ones tasks use.
+ * @property {import('./tasks.js').RelatedFile[]} files  The README's `## Files` links.
  * @property {import('./tasks.js').Task[]} tasks
  * @property {string[]} warnings
  */
@@ -140,13 +143,23 @@ async function loadProject(storage, path) {
     }),
   );
 
+  const workflow = workflowFrom(fm?.fields);
+  const tasks = /** @type {import('./tasks.js').Task[]} */ (loaded.filter(Boolean));
+  for (const t of tasks) if (!t.fields.get('status')) t.status = workflow.initial;
+  const strays = [...new Set(tasks.map((t) => t.status).filter((s) => !workflow.statuses.includes(s)))];
+  if (strays.length) warnings.push(`Tasks use statuses this project does not list: ${strays.join(', ')}. Move them under Settings.`);
+  const labels = [...new Set([...splitList(fm?.fields.get('labels')), ...tasks.flatMap((t) => t.tags).sort()])];
+
   return {
     path,
     readmePath,
     readme,
     title: (fm && getTitle(fm.body)) || basename(path) || 'Workspace',
     status: fm?.fields.get('status') || 'active',
-    tasks: /** @type {import('./tasks.js').Task[]} */ (loaded.filter(Boolean)).sort(compareTasks),
+    workflow,
+    labels,
+    files: readme ? sectionLinks(readme.text, 'Files').map((l) => ({ text: l.text, href: l.href, path: resolveRelative(readmePath, l.href) })) : [],
+    tasks: tasks.sort(taskComparator(workflow)),
     warnings,
   };
 }
@@ -222,5 +235,21 @@ async function createProject(storage, workspace, title) {
   return slug;
 }
 
-Taski.projects = { loadProject, loadWorkspace, createProject };
+/**
+ * Set fields in the project README (an empty value removes the field),
+ * creating the README if the project has none yet. One write for all fields.
+ * @param {import('./storage/storage.js').Storage} storage
+ * @param {Project} project
+ * @param {Record<string, string>} fields
+ */
+async function setProjectFields(storage, project, fields) {
+  let text = project.readme
+    ? project.readme.text
+    : ['---', 'type: project', 'status: active', '---', '', `# ${project.title}`, '', '## Tasks', ''].join('\n');
+  for (const [key, value] of Object.entries(fields)) text = setField(text, key, value.trim() ? value.trim() : null);
+  if (project.readme && text === project.readme.text) return;
+  await storage.write(project.readmePath, text, project.readme ? { rev: project.readme.rev } : { create: true });
+}
+
+Taski.projects = { loadProject, loadWorkspace, createProject, setProjectFields };
 })(window.Taski = window.Taski || {});

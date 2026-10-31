@@ -181,6 +181,22 @@ function appendToSection(text, heading, line) {
   return lines.join(eol);
 }
 
+/**
+ * Text without a `## heading` section, for display only. Sections holding
+ * checkboxes are kept so checkbox numbering still matches `setCheckbox`.
+ * @param {string} text
+ * @param {string} heading
+ */
+function withoutSection(text, heading) {
+  const lines = splitLines(text);
+  const range = sectionRange(lines, heading);
+  if (!range) return text;
+  const inside = lines.slice(range[0], range[1]);
+  if (inside.some((l) => CHECKBOX_RE.test(l))) return text;
+  lines.splice(range[0] - 1, range[1] - range[0] + 1);
+  return lines.join(eolOf(text));
+}
+
 const CHECKBOX_RE = /^(\s*[-*+]\s+\[)([ xX])(\]\s)/;
 
 /**
@@ -386,5 +402,5 @@ function slugify(title) {
     .slice(0, 60) || 'untitled';
 }
 
-Taski.markdown = { parseFrontmatter, setField, getTitle, sectionLinks, appendToSection, checklist, setCheckbox, escapeHtml, renderMarkdown, slugify };
+Taski.markdown = { parseFrontmatter, setField, getTitle, sectionLinks, appendToSection, withoutSection, checklist, setCheckbox, escapeHtml, renderMarkdown, slugify };
 })(window.Taski = window.Taski || {});

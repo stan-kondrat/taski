@@ -1,6 +1,6 @@
 ---
 type: task
-status: todo
+status: backlog
 priority: normal
 created: 2026-10-30
 tags: ui
