@@ -7,7 +7,7 @@
 const { appendToSection, getTitle, parseFrontmatter, sectionLinks, setField, slugify } = Taski.markdown;
 const { basename, dirname, join, relativeLink, resolveRelative } = Taski.path;
 const { NotFoundError } = Taski.storage;
-const { loadTask, splitList, taskComparator, workflowFrom } = Taski.tasks;
+const { loadTask, milestonesFrom, splitList, taskComparator, workflowFrom } = Taski.tasks;
 
 /**
  * @typedef {Object} FileText
@@ -24,6 +24,7 @@ const { loadTask, splitList, taskComparator, workflowFrom } = Taski.tasks;
  * @property {string} status
  * @property {import('./tasks.js').Workflow} workflow  Task statuses, from `statuses` and friends.
  * @property {string[]} labels    Labels from the README's `labels` field, then the ones tasks use.
+ * @property {import('./tasks.js').Milestone[]} milestones  From the README's `milestones` field, then the ones tasks use.
  * @property {import('./tasks.js').RelatedFile[]} files  The README's `## Files` links.
  * @property {import('./tasks.js').Task[]} tasks
  * @property {string[]} warnings
@@ -149,6 +150,10 @@ async function loadProject(storage, path) {
   const strays = [...new Set(tasks.map((t) => t.status).filter((s) => !workflow.statuses.includes(s)))];
   if (strays.length) warnings.push(`Tasks use statuses this project does not list: ${strays.join(', ')}. Move them under Settings.`);
   const labels = [...new Set([...splitList(fm?.fields.get('labels')), ...tasks.flatMap((t) => t.tags).sort()])];
+  const milestones = milestonesFrom(fm?.fields);
+  for (const name of [...new Set(tasks.map((t) => t.milestone).filter(Boolean))].sort()) {
+    if (!milestones.some((m) => m.name === name)) milestones.push({ name, due: '', listed: false });
+  }
 
   return {
     path,
@@ -158,6 +163,7 @@ async function loadProject(storage, path) {
     status: fm?.fields.get('status') || 'active',
     workflow,
     labels,
+    milestones,
     files: readme ? sectionLinks(readme.text, 'Files').map((l) => ({ text: l.text, href: l.href, path: resolveRelative(readmePath, l.href) })) : [],
     tasks: tasks.sort(taskComparator(workflow)),
     warnings,

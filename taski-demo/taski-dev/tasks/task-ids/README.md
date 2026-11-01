@@ -4,6 +4,7 @@ status: todo
 priority: normal
 created: 2026-10-30
 tags: format
+milestone: 1.0
 ---
 
 # Decide on portable task IDs

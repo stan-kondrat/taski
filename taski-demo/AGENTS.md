@@ -19,6 +19,7 @@ no nesting, no multi-line values, no duplicate keys.
 | `due`      | `YYYY-MM-DD`                                  |
 | `created`  | `YYYY-MM-DD`                                  |
 | `tags`     | task labels, comma-separated                  |
+| `milestone`| task: one of the project's `milestones`       |
 
 A project README may set its own task statuses and labels:
 
@@ -28,16 +29,19 @@ A project README may set its own task statuses and labels:
 | `active-statuses` | statuses that mean "in progress" (default `doing`)              |
 | `closed-statuses` | statuses that mean finished (default `done`, `cancelled`, else the last one) |
 | `labels`          | suggested task labels, comma-separated                          |
+| `milestones`      | the project's milestones in order, each with an optional `(YYYY-MM-DD)` date |
 
 ```
 statuses: backlog, todo, doing, review, done, cancelled
 active-statuses: doing, review
 labels: bug, idea, research
+milestones: MVP (2026-12-01), Beta, 1.0
 ```
 
 Without `statuses` a project uses `todo doing blocked done cancelled`. Use only the
 project's statuses in its tasks. New tasks start in the first status that is neither
-active nor closed.
+active nor closed. A task's `milestone` must be one of the project's `milestones`; to
+add a milestone, add it to the project README first.
 
 The first `# Heading` is the title. Everything else is free Markdown. Checklists use
 `- [ ]` and `- [x]`.

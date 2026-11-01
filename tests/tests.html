@@ -210,6 +210,29 @@
       eq(again.tasks.map((t) => t.title), ['B', 'A', 'C']);
     });
 
+    test('milestonesFrom: order, dates and duplicates', () => {
+      const { milestonesFrom, formatMilestones } = Taski.tasks;
+      const ms = milestonesFrom(new Map([['milestones', 'MVP (2026-11-30), Beta, MVP, 1.0 (soon),  2.0(2027-01-01)']]));
+      eq(ms.map((m) => `${m.name}|${m.due}`), ['MVP|2026-11-30', 'Beta|', '1.0 (soon)|', '2.0|2027-01-01']);
+      eq(formatMilestones(ms), 'MVP (2026-11-30), Beta, 1.0 (soon), 2.0 (2027-01-01)');
+      eq(milestonesFrom(), []);
+    });
+
+    test('project milestones: listed first, then the ones tasks use', async () => {
+      const s = memStorage({
+        'p/README.md': '---\ntype: project\nmilestones: v2 (2026-12-01), v1\n---\n# P\n',
+        'p/tasks/a.md': '---\nmilestone: v1\n---\n# A\n',
+        'p/tasks/b.md': '---\nmilestone: later\nstatus: done\n---\n# B\n',
+        'p/tasks/c.md': '# C\n',
+      });
+      const p = await Taski.projects.loadProject(s, 'p');
+      eq(p.milestones, [{ name: 'v2', due: '2026-12-01', listed: true }, { name: 'v1', due: '', listed: true }, { name: 'later', due: '', listed: false }]);
+      eq(p.tasks.map((t) => `${t.title}:${t.milestone}`), ['A:v1', 'C:', 'B:later']);
+      const a = p.tasks[0];
+      await Taski.tasks.setTaskField(s, a, 'milestone', '');
+      eq(s.files.get('p/tasks/a.md'), '---\n---\n# A\n');
+    });
+
     test('setProjectFields edits the README in one write', async () => {
       const s = memStorage({ 'p/README.md': '---\ntype: project\nowner: me\n---\n# P\n', 'p/tasks/a.md': '# A\n' });
       const project = await Taski.projects.loadProject(s, 'p');
@@ -274,6 +297,8 @@
       eq([...dev.workflow.active], ['doing', 'review']);
       eq(dev.tasks[0].status, 'doing');
       eq(dev.files.length, 2);
+      eq(dev.milestones.map((m) => `${m.name}|${m.due}`), ['MVP|2026-11-30', '1.0|']);
+      eq(dev.tasks.filter((t) => t.milestone === 'MVP').length, 4);
     });
 
     test('scopedStorage maps paths into a subfolder', async () => {

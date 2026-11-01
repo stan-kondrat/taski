@@ -159,11 +159,12 @@ tags: kubernetes, raspberry-pi
 - Frontmatter is a strict subset of YAML: one `key: value` per line, no nesting.
 - `status`: `todo`, `doing`, `blocked`, `done`, `cancelled`, unless the project sets its own
   (below). `priority`: `low`, `normal`, `high`. Dates: `YYYY-MM-DD`. `tags`: the task's labels.
+  `milestone`: one of the project's milestones (below).
 - The first `# Heading` is the title. Unknown fields and all other text are kept as they are.
 - `## Files` in a task or project README links its documents: relative paths or URLs.
   Taski lists them with previews, next to unlinked files it finds in the same folder.
 
-### Project statuses and labels
+### Project statuses, labels and milestones
 
 Each project can have its own workflow, set in its README frontmatter (or under
 **Settings** on the project page):
@@ -176,6 +177,7 @@ statuses: backlog, todo, doing, review, done, cancelled
 active-statuses: doing, review
 closed-statuses: done, cancelled
 labels: bug, idea, research
+milestones: MVP (2026-12-01), Beta, 1.0
 ---
 ```
 
@@ -184,6 +186,13 @@ labels: bug, idea, research
 - `closed-statuses` are finished: hidden from open tasks (default `done` and `cancelled`,
   or the last status).
 - `labels` are suggested when labelling tasks; labels tasks already use are added.
+- `milestones` are the project's milestones in order, each with an optional date in
+  brackets. A task joins one with `milestone: MVP`. The project page shows each milestone's
+  progress and filters by it; the sidebar lists them under their project; the overview shows
+  each project's next unfinished milestone.
+- `status: archived` (the **Archive** button on the project page) folds a project away under
+  **Archived** in the sidebar and the overview and leaves its tasks out of Focus. Its files stay
+  as they are; **Unarchive** makes it active again.
 - New tasks get the first status that is neither active nor closed.
 - Plain web hosting can't list folders, so `## Projects` and `## Tasks` links are how
   projects and tasks are found there. Taski adds these links when it creates something.

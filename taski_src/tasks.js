@@ -47,6 +47,39 @@ function workflowFrom(fields = new Map()) {
 const DEFAULT_WORKFLOW = workflowFrom();
 
 /**
+ * A project milestone: a name tasks refer to in their `milestone` field.
+ * @typedef {Object} Milestone
+ * @property {string} name
+ * @property {string} due     `YYYY-MM-DD`, or empty.
+ * @property {boolean} listed  In the project README's `milestones`, not only used by tasks.
+ */
+
+/**
+ * Milestones from the project README's `milestones` field, in order. Each item
+ * is a name, optionally followed by a due date in brackets: `MVP (2026-11-30), 1.0`.
+ * @param {Map<string, string>} [fields]  Project README frontmatter.
+ * @returns {Milestone[]}
+ */
+function milestonesFrom(fields = new Map()) {
+  /** @type {Map<string, Milestone>} */
+  const out = new Map();
+  for (const item of splitList(fields.get('milestones'))) {
+    const m = /^(.*?)\s*\((\d{4}-\d{2}-\d{2})\)$/.exec(item);
+    const name = m ? m[1] : item;
+    if (name && !out.has(name)) out.set(name, { name, due: m ? m[2] : '', listed: true });
+  }
+  return [...out.values()];
+}
+
+/**
+ * The `milestones` field value for a list of milestones.
+ * @param {{name: string, due?: string}[]} milestones
+ */
+function formatMilestones(milestones) {
+  return milestones.map((m) => (m.due ? `${m.name} (${m.due})` : m.name)).join(', ');
+}
+
+/**
  * 'active', 'open' or 'closed'.
  * @param {Workflow} wf
  * @param {string} status
@@ -73,6 +106,7 @@ function statusKind(wf, status) {
  * @property {string} status
  * @property {string} priority
  * @property {string} due
+ * @property {string} milestone   Name of the project milestone, or empty.
  * @property {string[]} tags
  * @property {{done: number, total: number}} progress
  * @property {RelatedFile[]} files
@@ -99,6 +133,7 @@ function parseTask(path, text, rev) {
     status: fm.fields.get('status') || 'todo',
     priority: fm.fields.get('priority') || 'normal',
     due: fm.fields.get('due') || '',
+    milestone: fm.fields.get('milestone') || '',
     tags: (fm.fields.get('tags') || '').split(',').map((t) => t.trim()).filter(Boolean),
     progress: { done: items.filter((i) => i.done).length, total: items.length },
     files: sectionLinks(text, 'Files').map((l) => ({ text: l.text, href: l.href, path: resolveRelative(path, l.href) })),
@@ -228,7 +263,7 @@ async function createTask(storage, project, { title, singleFile = false }) {
 }
 
 Taski.tasks = {
-  STATUSES, PRIORITIES, DEFAULT_WORKFLOW, splitList, workflowFrom, statusKind, statusRank,
+  STATUSES, PRIORITIES, DEFAULT_WORKFLOW, splitList, workflowFrom, milestonesFrom, formatMilestones, statusKind, statusRank,
   parseTask, loadTask, saveTask, setTaskField, setTaskCheck, compareTasks, taskComparator, today, exists, createTask,
 };
 })(window.Taski = window.Taski || {});

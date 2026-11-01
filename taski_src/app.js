@@ -38,7 +38,7 @@ let editNext = false;
 const listUi = new Map();
 /** @param {string} path */
 function uiFor(path) {
-  if (!listUi.has(path)) listUi.set(path, { filter: 'open', query: '', labels: [], layout: 'list' });
+  if (!listUi.has(path)) listUi.set(path, { filter: 'open', query: '', labels: [], milestone: '', layout: 'list' });
   return /** @type {import('./ui/views.js').ListUi} */ (listUi.get(path));
 }
 
@@ -463,17 +463,46 @@ async function refresh() {
   await route();
 }
 
+/**
+ * Projects with their milestones as a second level; archived projects are
+ * folded away at the bottom.
+ */
 function renderSidebar() {
   if (!workspace) return;
   const here = decodeURIComponent(location.hash);
+  const c = ctx();
+  const projectItem = (/** @type {import('./projects.js').Project} */ p) => {
+    const open = p.tasks.filter((t) => isOpen(t, p)).length;
+    const atProject = here === `#/p/${p.path}`;
+    const on = here.startsWith(`#/p/${p.path}`) || p.tasks.some((t) => here === `#/t/${t.path}`);
+    const picked = listUi.get(p.path)?.milestone || '';
+    const milestones = p.status === 'archived' ? [] : p.milestones.map((m) => {
+      const tasks = p.tasks.filter((t) => t.milestone === m.name);
+      const left = tasks.filter((t) => isOpen(t, p)).length;
+      const cls = [atProject && picked === m.name ? 'on' : '', tasks.length && !left ? 'reached' : ''].join(' ');
+      return h('li', null, h('a', {
+        href: projectHref(p.path), class: cls, title: m.due ? `${m.name} · ${m.due}` : m.name,
+        onclick: (/** @type {Event} */ e) => { e.preventDefault(); c.showMilestone(p, m.name); },
+      }, h('span', null, m.name), left ? h('span.count', null, left) : null));
+    });
+    return h('li', null,
+      h('a', {
+        href: projectHref(p.path), class: on && !(atProject && picked) ? 'on' : on ? 'within' : '',
+        // The project link shows all of its tasks again.
+        onclick: () => { if (picked && atProject) c.showMilestone(p, ''); else if (picked) uiFor(p.path).milestone = ''; },
+      }, h('span', null, p.title), open ? h('span.count', null, open) : null),
+      milestones.length ? h('ul.milestones', null, milestones) : null);
+  };
+  const live = workspace.projects.filter((p) => p.status !== 'archived');
+  const archived = workspace.projects.filter((p) => p.status === 'archived');
   sidebar.replaceChildren(
     h('a.home', { href: '#/', class: here === '' || here === '#/' ? 'on' : '' }, workspace.title),
-    h('ul', null, workspace.projects.map((p) => {
-      const open = p.tasks.filter((t) => isOpen(t, p)).length;
-      const on = here.startsWith(`#/p/${p.path}`) || p.tasks.some((t) => here === `#/t/${t.path}`);
-      return h('li', null, h('a', { href: projectHref(p.path), class: on ? 'on' : '' },
-        h('span', null, p.title), open ? h('span.count', null, open) : null));
-    })));
+    h('ul', null, live.map(projectItem)),
+    ...(archived.length
+      ? [h('details.archived', { open: archived.some((p) => here.startsWith(`#/p/${p.path}`) || p.tasks.some((t) => here === `#/t/${t.path}`)) || null },
+          h('summary', null, 'Archived', h('span.count', null, archived.length)),
+          h('ul', null, archived.map(projectItem)))]
+      : []));
 }
 
 /** @returns {import('./ui/views.js').ViewContext} */
@@ -570,10 +599,12 @@ function ctx() {
       await refresh();
     },
     showLabel: (project, label) => {
-      const ui = uiFor(project.path);
-      ui.labels = [label];
-      if (location.hash === projectHref(project.path)) route();
-      else location.hash = projectHref(project.path);
+      uiFor(project.path).labels = [label];
+      showProject(project.path);
+    },
+    showMilestone: (project, milestone) => {
+      uiFor(project.path).milestone = milestone;
+      showProject(project.path);
     },
     saveFile: async (path, text, rev) => {
       try {
@@ -587,6 +618,16 @@ function ctx() {
       await refresh();
     },
   };
+}
+
+/** Open a project page, or redraw it after its filters changed. @param {string} path */
+function showProject(path) {
+  if (location.hash !== projectHref(path)) {
+    location.hash = projectHref(path);
+    return;
+  }
+  renderSidebar();
+  route();
 }
 
 async function refreshData() {

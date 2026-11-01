@@ -375,3 +375,50 @@ button.small { font-size: 12px; padding: 2px 8px; }
 .moves { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--warn); border-radius: var(--radius); display: flex; flex-direction: column; gap: 6px; }
 .moves p { margin: 0; }
 .move { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; }
+
+/* ---- milestones ---- */
+
+.milestone {
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 0 8px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  white-space: nowrap;
+}
+.milestone::before { content: '◆ '; color: var(--accent); font-size: 10px; }
+button.milestone { cursor: pointer; font-weight: 500; }
+button.milestone:hover { border-color: var(--accent); }
+
+.milestone-bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+.milestone-bar:empty { display: none; }
+.milestone-card { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 6px 12px; min-width: 140px; text-align: left; background: var(--panel); border-radius: var(--radius); }
+.milestone-card .name { font-weight: 600; }
+.milestone-card .name::before { content: '◆ '; color: var(--accent); font-size: 11px; }
+.milestone-card.none .name::before { content: ''; }
+.milestone-card.none .name { font-weight: 500; color: var(--muted); }
+.milestone-card.reached .name::before { content: '✓ '; color: var(--ok); }
+.milestone-card.on { border-color: var(--accent); background: var(--accent-soft); }
+.next-milestone { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+/* ---- sidebar: milestones and archived projects ---- */
+
+.sidebar a.within { color: var(--accent); font-weight: 600; }
+.sidebar ul.milestones { margin: 0 0 4px 12px; padding-left: 6px; border-left: 1px solid var(--line); }
+.sidebar ul.milestones a { font-size: 13px; padding: 2px 10px; color: var(--muted); }
+.sidebar ul.milestones a > span:first-child::before { content: '◆ '; color: var(--accent); font-size: 10px; }
+.sidebar ul.milestones a.reached > span:first-child::before { content: '✓ '; color: var(--ok); }
+.sidebar ul.milestones a.on { color: var(--accent); }
+.sidebar details.archived { margin-top: 12px; }
+.sidebar details.archived summary { cursor: pointer; padding: 5px 10px; color: var(--muted); font-size: 13px; display: flex; gap: 8px; }
+.sidebar details.archived a { color: var(--muted); }
+.view h1 .archive { margin-left: auto; font-weight: 400; }
+.archived-note { margin: -8px 0 12px; padding: 6px 12px; border-left: 3px solid var(--muted); color: var(--muted); font-size: 14px; }
+details.archived-projects { margin-top: 28px; }
+details.archived-projects .project-cards { margin-top: 10px; }
+
+@media (max-width: 720px) {
+  .sidebar ul.milestones { display: none; }
+}

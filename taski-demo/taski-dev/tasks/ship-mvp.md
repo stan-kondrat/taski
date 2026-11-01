@@ -4,6 +4,7 @@ status: doing
 priority: high
 created: 2026-10-30
 tags: release
+milestone: MVP
 ---
 
 # Ship the MVP

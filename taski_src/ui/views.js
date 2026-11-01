@@ -7,7 +7,7 @@
 const { h, select } = Taski.dom;
 const { parseFrontmatter, renderMarkdown, withoutSection } = Taski.markdown;
 const { basename, dirname, join, resolveRelative } = Taski.path;
-const { DEFAULT_WORKFLOW, PRIORITIES, splitList, statusKind, today } = Taski.tasks;
+const { DEFAULT_WORKFLOW, PRIORITIES, formatMilestones, milestonesFrom, splitList, statusKind, today } = Taski.tasks;
 const { canPreview, fileKind, listAttachments, projectOwner, taskOwner } = Taski.files;
 
 /**
@@ -15,6 +15,7 @@ const { canPreview, fileKind, listAttachments, projectOwner, taskOwner } = Taski
  * @property {string} filter   'open' | 'closed' | 'all'
  * @property {string} query
  * @property {string[]} labels Show tasks with any of these labels.
+ * @property {string} milestone  Show only this milestone's tasks: '' for all, NO_MILESTONE for tasks without one.
  * @property {string} layout   'list' | 'board'
  */
 
@@ -33,8 +34,12 @@ const { canPreview, fileKind, listAttachments, projectOwner, taskOwner } = Taski
  * @property {(owner: import('../files.js').Owner, path: string) => Promise<void>} attachPath
  * @property {(owner: import('../files.js').Owner, title: string) => Promise<void>} createNote
  * @property {(project: import('../projects.js').Project, label: string) => void} showLabel
+ * @property {(project: import('../projects.js').Project, milestone: string) => void} showMilestone
  * @property {(project: import('../projects.js').Project, from: string, to: string) => Promise<void>} moveStatus
  */
+
+/** `ListUi.milestone` value for tasks without a milestone; no name can be empty. */
+const NO_MILESTONE = ' ';
 
 /** @param {string} path */
 const encodePath = (path) => path.split('/').map(encodeURIComponent).join('/');
@@ -141,11 +146,46 @@ function labelChip(name, opts = {}) {
  * @param {import('../projects.js').Project} [project]
  */
 function dueBadge(t, project) {
-  if (!t.due) return null;
+  return dateBadge(t.due, isOpen(t, project));
+}
+
+/**
+ * A due date, marked overdue or due today while the work is still open.
+ * @param {string} date
+ * @param {boolean} open
+ * @param {string} [title]
+ */
+function dateBadge(date, open, title = 'Due date') {
+  if (!date) return null;
   const now = today();
-  const open = isOpen(t, project);
-  const cls = open && t.due < now ? 'due.overdue' : open && t.due === now ? 'due.today' : 'due';
-  return h(`span.${cls}`, { title: 'Due date' }, t.due);
+  const cls = open && date < now ? 'due.overdue' : open && date === now ? 'due.today' : 'due';
+  return h(`span.${cls}`, { title }, date);
+}
+
+/**
+ * How many of a milestone's tasks are closed, in the shape `progress()` takes.
+ * @param {import('../projects.js').Project} project
+ * @param {string} name
+ */
+function milestoneProgress(project, name) {
+  const tasks = project.tasks.filter((t) => t.milestone === name);
+  return { done: tasks.filter((t) => !isOpen(t, project)).length, total: tasks.length };
+}
+
+/** A milestone with no tasks, or with open ones, is not reached yet. @param {{done: number, total: number}} p */
+const unfinished = (p) => !p.total || p.done < p.total;
+
+/**
+ * Milestone of a task; clicking it filters the project by it.
+ * @param {ViewContext} ctx
+ * @param {import('../tasks.js').Task} t
+ * @param {import('../projects.js').Project} [project]
+ */
+function milestoneChip(ctx, t, project) {
+  if (!t.milestone) return null;
+  return project
+    ? h('button.milestone', { type: 'button', title: `Show tasks of milestone ${t.milestone}`, onclick: () => ctx.showMilestone(project, t.milestone) }, t.milestone)
+    : h('span.milestone', { title: 'Milestone' }, t.milestone);
 }
 
 /** @param {{done: number, total: number}} p */
@@ -181,6 +221,7 @@ function taskRow(ctx, t, project, showProject = false) {
     h('a.title', { href: taskHref(t.path) }, t.title),
     t.priority !== 'normal' ? h(`span.prio.p-${t.priority}`, { title: 'Priority' }, t.priority) : null,
     showProject && project ? h('a.proj', { href: projectHref(project.path) }, project.title) : null,
+    milestoneChip(ctx, t, project),
     taskLabels(ctx, t, project),
     t.files.length ? h('span.attach', { title: `${t.files.length} attached file${t.files.length > 1 ? 's' : ''}` }, `📎 ${t.files.length}`) : null,
     progress(t.progress),
@@ -223,9 +264,11 @@ function quickForm(placeholder, button, onSubmit, ...extra) {
 /** @param {ViewContext} ctx */
 function overviewView(ctx) {
   const ws = ctx.workspace;
-  const items = allTasks(ws).filter((x) => isOpen(x.task, x.project));
+  const items = allTasks(ws).filter((x) => x.project.status !== 'archived' && isOpen(x.task, x.project));
   const now = today();
   const soonStr = today(new Date(Date.now() + 7 * 864e5));
+  const live = ws.projects.filter((p) => p.status !== 'archived');
+  const archived = ws.projects.filter((p) => p.status === 'archived');
   const focus = items.filter((x) =>
     statusKind(x.project.workflow, x.task.status) === 'active' || (x.task.due && x.task.due <= soonStr) || x.task.priority === 'high');
 
@@ -237,18 +280,31 @@ function overviewView(ctx) {
       ? h('ul.task-list', null, focus.map((x) => taskRow(ctx, x.task, x.project, true)))
       : h('p.muted', null, items.length ? 'Nothing in progress, high priority or due this week.' : 'No open tasks.'),
     h('h2', null, 'Projects'),
-    ws.projects.length
-      ? h('ul.project-cards', null, ws.projects.map((p) => {
+    live.length
+      ? h('ul.project-cards', null, live.map(projectCard))
+      : h('p.muted', null, archived.length ? 'Every project is archived.' : 'No projects yet.'),
+    ctx.storage.canWrite ? quickForm('New project name', 'Add project', (v) => ctx.createProject(v)) : null,
+    archived.length
+      ? h('details.panel.archived-projects', null, h('summary', null, `Archived projects · ${archived.length}`),
+          h('ul.project-cards', null, archived.map(projectCard)))
+      : null);
+
+  /** @param {import('../projects.js').Project} p */
+  function projectCard(p) {
           const open = p.tasks.filter((t) => isOpen(t, p));
           const overdue = open.filter((t) => t.due && t.due < now).length;
+          const next = p.milestones.find((m) => m.listed && unfinished(milestoneProgress(p, m.name)));
+          const nextProgress = next ? milestoneProgress(p, next.name) : null;
           return h(`li.card${p.status === 'archived' ? '.archived' : ''}`, null,
             h('a', { href: projectHref(p.path) }, h('strong', null, p.title)),
             h('span.muted', null, `${open.length} open · ${p.tasks.length - open.length} closed`),
+            next && nextProgress
+              ? h('span.next-milestone', { title: 'Next milestone' }, h('span.milestone', null, next.name),
+                  progress(nextProgress), dateBadge(next.due, true, 'Milestone date'))
+              : null,
             overdue ? h('span.due.overdue', null, `${overdue} overdue`) : null,
             p.status !== 'active' ? h('span.tag', null, p.status) : null);
-        }))
-      : h('p.muted', null, 'No projects yet.'),
-    ctx.storage.canWrite ? quickForm('New project name', 'Add project', (v) => ctx.createProject(v)) : null);
+  }
 }
 
 /**
@@ -266,6 +322,7 @@ function projectSettings(ctx, project) {
   const active = input(fm.get('active-statuses') || '', [...wf.active].join(', ') || 'none');
   const closed = input(fm.get('closed-statuses') || '', [...wf.closed].join(', '));
   const labels = input(fm.get('labels') || '', 'bug, idea, research');
+  const milestones = input(fm.get('milestones') || '', 'MVP (2026-12-01), Beta, 1.0');
   const form = /** @type {HTMLFormElement} */ (h('form.settings', {
     onsubmit: async (/** @type {Event} */ e) => {
       e.preventDefault();
@@ -278,6 +335,7 @@ function projectSettings(ctx, project) {
           'active-statuses': splitList(active.value).join(', '),
           'closed-statuses': splitList(closed.value).join(', '),
           labels: splitList(labels.value).join(', '),
+          milestones: formatMilestones(milestonesFrom(new Map([['milestones', milestones.value]]))),
         });
       } finally {
         form.classList.remove('busy');
@@ -290,6 +348,8 @@ function projectSettings(ctx, project) {
   h('label', null, 'In progress', active, h('span.hint', null, 'Shown under Focus.')),
   h('label', null, 'Closed', closed, h('span.hint', null, 'Finished; hidden from open tasks.')),
   h('label.wide', null, 'Labels', labels, h('span.hint', null, 'Suggested when labelling tasks. Labels tasks already use are added automatically.')),
+  h('label.wide', null, 'Milestones, in order', milestones,
+    h('span.hint', null, 'Comma-separated. Add a date in brackets: MVP (2026-12-01). Tasks pick one in their Milestone field.')),
   ctx.storage.canWrite ? h('div.actions', null, h('button.primary', { type: 'submit' }, 'Save settings'),
     h('span.muted.small', null, 'Saved in ', h('a', { href: fileHref(project.readmePath) }, project.readmePath))) : null));
 
@@ -341,6 +401,7 @@ function board(ctx, project, tasks) {
     h('a.title', { href: taskHref(t.path) }, t.title),
     h('div.chips', null,
       t.priority !== 'normal' ? h(`span.prio.p-${t.priority}`, null, t.priority) : null,
+      milestoneChip(ctx, t, project),
       taskLabels(ctx, t, project),
       t.files.length ? h('span.attach', null, `📎 ${t.files.length}`) : null,
       progress(t.progress),
@@ -358,12 +419,17 @@ function projectView(ctx, project, ui) {
   const body = h('div.tasks');
   const counts = h('span.muted');
   const labelBar = h('div.label-bar');
+  const milestoneBar = h('div.milestone-bar');
+  if (ui.milestone && ui.milestone !== NO_MILESTONE && !project.milestones.some((m) => m.name === ui.milestone)) ui.milestone = '';
 
   const matches = (/** @type {import('../tasks.js').Task} */ t) => {
     const q = ui.query.toLowerCase();
-    return (!q || t.title.toLowerCase().includes(q) || t.tags.some((tag) => tag.toLowerCase().includes(q))) &&
-      (!ui.labels.length || ui.labels.some((l) => t.tags.includes(l)));
+    return (!q || t.title.toLowerCase().includes(q) || t.milestone.toLowerCase().includes(q) || t.tags.some((tag) => tag.toLowerCase().includes(q))) &&
+      (!ui.labels.length || ui.labels.some((l) => t.tags.includes(l))) &&
+      (!ui.milestone || t.milestone === (ui.milestone === NO_MILESTONE ? '' : ui.milestone));
   };
+  // Through the app, so the sidebar highlights the milestone too.
+  const pickMilestone = (/** @type {string} */ name) => ctx.showMilestone(project, ui.milestone === name ? '' : name);
   const render = () => {
     const filtered = project.tasks.filter(matches);
     const shown = ui.layout === 'board' ? filtered
@@ -388,6 +454,23 @@ function projectView(ctx, project, ui) {
           })),
           ui.labels.length ? h('button.link', { type: 'button', onclick: () => { ui.labels = []; render(); } }, 'clear') : '']
       : []));
+    const unplanned = project.tasks.filter((t) => !t.milestone && isOpen(t, project)).length;
+    milestoneBar.replaceChildren(...(project.milestones.length
+      ? [...project.milestones.map((m) => {
+          const p = milestoneProgress(project, m.name);
+          const on = ui.milestone === m.name;
+          return h(`button.milestone-card${on ? '.on' : ''}${unfinished(p) ? '' : '.reached'}`, {
+            type: 'button', 'aria-pressed': on ? 'true' : 'false', onclick: () => pickMilestone(m.name),
+            title: m.listed ? `Show tasks of ${m.name}` : `${m.name} is used by tasks but not listed in Settings`,
+          },
+          h('span.name', null, m.name, m.listed ? null : h('span.hint', null, ' ?')),
+          h('span.chips', null, p.total ? progress(p) : h('span.muted.small', null, 'no tasks'), dateBadge(m.due, unfinished(p), 'Milestone date')));
+        }),
+        h(`button.milestone-card.none${ui.milestone === NO_MILESTONE ? '.on' : ''}`, {
+          type: 'button', 'aria-pressed': ui.milestone === NO_MILESTONE ? 'true' : 'false', onclick: () => pickMilestone(NO_MILESTONE),
+          title: 'Show tasks without a milestone',
+        }, h('span.name', null, 'No milestone'), h('span.muted.small', null, `${unplanned} open`))]
+      : []));
   };
   const toggle = (/** @type {HTMLElement[]} */ group, /** @type {EventTarget | null} */ on) => {
     for (const b of group) b.classList.toggle('on', b === on);
@@ -404,12 +487,24 @@ function projectView(ctx, project, ui) {
     }, l));
   render();
 
+  const archived = project.status === 'archived';
   const singleFile = /** @type {HTMLInputElement} */ (h('input', { type: 'checkbox' }));
   const notes = project.readme ? bodyWithoutTitle(withoutSection(withoutSection(project.readme.text, 'Tasks'), 'Files')) : '';
 
   return h('section.view.project', null,
     h('nav.crumbs', null, h('a', { href: '#/' }, ctx.workspace.title), ' › '),
-    h('h1', null, project.title, project.status !== 'active' ? h('span.tag', null, project.status) : null),
+    h('h1', null, project.title, project.status !== 'active' ? h('span.tag', null, project.status) : null,
+      ctx.storage.canWrite
+        ? h('button.small.archive', {
+            type: 'button',
+            title: archived ? 'Make the project active again' : 'Hide the project from the sidebar and Focus; its files stay',
+            onclick: (/** @type {Event} */ e) => {
+              /** @type {HTMLElement} */ (e.currentTarget).classList.add('busy');
+              ctx.setProjectFields(project, { status: archived ? '' : 'archived' });
+            },
+          }, archived ? 'Unarchive' : 'Archive')
+        : null),
+    archived ? h('p.archived-note', null, 'This project is archived: it is left out of Focus and folded away in the sidebar.') : null,
     warningBox(project.warnings),
     notes.trim()
       ? h('details.panel.notes', null, h('summary', null, 'About this project'),
@@ -423,9 +518,10 @@ function projectView(ctx, project, ui) {
     h('div.toolbar', null,
       h('div.tabs', { role: 'group', 'aria-label': 'Layout' }, layouts),
       h('div.tabs', { role: 'group', 'aria-label': 'Show' }, tabs),
-      h('input.search', { type: 'search', placeholder: 'Filter by title or label', value: ui.query, 'aria-label': 'Filter tasks',
+      h('input.search', { type: 'search', placeholder: 'Filter by title, label or milestone', value: ui.query, 'aria-label': 'Filter tasks',
         oninput: (/** @type {Event} */ e) => { ui.query = /** @type {HTMLInputElement} */ (e.target).value; render(); } }),
       counts),
+    milestoneBar,
     labelBar,
     body,
     filesPanel(ctx, projectOwner(project), 'Project files'),
@@ -466,6 +562,26 @@ function editor(text, onSave, onCancel) {
       h('span.muted', null, '⌘/Ctrl+S to save, Esc to cancel')));
   queueMicrotask(() => area.focus());
   return wrap;
+}
+
+/**
+ * The project's milestones, plus "none" and the task's own if the project
+ * does not list it.
+ * @param {import('../tasks.js').Task} task
+ * @param {import('../projects.js').Project | undefined} project
+ * @param {Record<string, any>} attrs
+ */
+function milestoneSelect(task, project, attrs) {
+  const names = (project?.milestones || []).map((m) => m.name);
+  if (task.milestone && !names.includes(task.milestone)) names.push(task.milestone);
+  const due = project?.milestones.find((m) => m.name === task.milestone)?.due;
+  return h('select', {
+    ...attrs,
+    disabled: attrs.disabled || (!names.length ? true : null),
+    title: names.length ? (due ? `Milestone date ${due}` : null) : 'Add milestones under the project’s Settings',
+  },
+  h('option', { value: '', selected: !task.milestone }, '—'),
+  names.map((n) => h('option', { value: n, selected: n === task.milestone }, n)));
 }
 
 /**
@@ -643,7 +759,7 @@ function taskView(ctx, task, project, ui) {
     input.addEventListener('change', () => ctx.setCheck(task, Number(input.dataset.check), input.checked));
   }
 
-  const known = new Set(['type', 'status', 'priority', 'due', 'created', 'tags']);
+  const known = new Set(['type', 'status', 'priority', 'due', 'created', 'tags', 'milestone']);
   const extra = [...task.fields].filter(([k]) => !known.has(k));
 
   return h('section.view.task', null,
@@ -653,6 +769,7 @@ function taskView(ctx, task, project, ui) {
       h('label', null, 'Status', statusSelect(ctx, task, project)),
       h('label', null, 'Priority', select(task.priority, PRIORITIES, { disabled: w, onchange: field('priority') })),
       h('label', null, 'Due', h('input', { type: 'date', value: task.due, disabled: w, onchange: field('due') })),
+      h('label', null, 'Milestone', milestoneSelect(task, project, { disabled: w, onchange: field('milestone') })),
       h('div.field.grow', null, h('span', null, 'Labels'), labelEditor(ctx, task, project)),
       progress(task.progress)),
     extra.length ? h('dl.extra', null, extra.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])) : null,

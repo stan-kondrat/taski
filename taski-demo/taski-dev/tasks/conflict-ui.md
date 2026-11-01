@@ -4,6 +4,7 @@ status: backlog
 priority: normal
 created: 2026-10-30
 tags: ui
+milestone: 1.0
 ---
 
 # Show a warning when a file changed on disk

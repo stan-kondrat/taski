@@ -4,6 +4,7 @@ status: review
 priority: normal
 created: 2026-10-31
 tags: ui, format
+milestone: MVP
 ---
 
 # Statuses, labels and files per project

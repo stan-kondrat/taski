@@ -4,6 +4,7 @@ status: todo
 priority: high
 created: 2026-10-30
 tags: drive, deploy
+milestone: MVP
 ---
 
 # Set up Google Drive OAuth client
