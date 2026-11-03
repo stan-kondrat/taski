@@ -62,6 +62,34 @@ Where your files can live, for each way:
 remote one through an SSH tunnel (`ssh -L 8000:127.0.0.1:8000 your-server`) or put it behind
 a reverse proxy with HTTPS and a password.
 
+### MCP for AI agents
+
+`server.py` also speaks the [Model Context Protocol](https://modelcontextprotocol.io), so an
+agent can read and edit the same workspace. Tools: `list_projects`, `list_files`, `read_file`,
+`write_file`, `make_folder`, `move_file`, `delete_file`. The agent gets the same limits as the
+browser (Markdown and text files only, nothing outside the root, atomic writes) and
+`write_file` refuses to overwrite a file that changed since `read_file` returned its revision.
+
+```bash
+# stdio: the agent starts the server itself
+claude mcp add taski -- python3 /path/to/server.py --mcp --root ~/Documents/taski
+
+# HTTP: the running server also answers at http://127.0.0.1:8000/mcp
+claude mcp add --transport http taski http://127.0.0.1:8000/mcp
+```
+
+Limit an agent to some projects (top-level folders) with `--project`, repeated as needed:
+
+```bash
+python3 server.py --mcp --root ~/Documents/taski --project website --project app
+```
+
+With HTTP, `--project` limits `/mcp`, and `/mcp/website` narrows one connection to a single
+project, so one server can give each agent its own project. Root files such as `AGENTS.md`
+stay readable. The browser app is not affected by `--project`. This keeps an agent out of other
+projects; it is not a security boundary against anything else that can read your disk or
+reach the server's port.
+
 ## URL parameters
 
 `taski.html` takes the storage type and a path from the query string, so you can bookmark
