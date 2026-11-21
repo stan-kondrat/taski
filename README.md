@@ -127,9 +127,11 @@ When `create_task` or `update_task` changes a task, the server sends a `task.cre
   [Standard Webhooks](https://www.standardwebhooks.com) headers and retried with backoff.
   Webhook URLs must be public https unless the server runs with `--allow-private-webhooks`.
 
-Streams and subscriptions live in memory and end when the server stops. Only `create_task` and
-`update_task` send events (not `write_file`, the browser or edits on disk), and the stdio transport
-has no event stream.
+Streams and subscriptions live in memory and end when the server stops. A task changed by
+`create_task`/`update_task`, saved from the browser app, or written with `write_file` sends an
+event (events from plain saves carry `via`: `http-api` or `write_file`, and `changed` lists what
+differs: task fields, `title`, `content`, `frontmatter`). Edits made directly on disk are not seen.
+The stdio transport has no event stream.
 
 ## URL parameters
 

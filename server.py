@@ -31,7 +31,9 @@ create_task, update_task, list_files, read_file, write_file, make_folder, move_f
 delete_file.
 
 MCP Events (protocol 2026-07-28): events/list, events/subscribe, events/unsubscribe.
-Events: task.created, task.updated. Two ways to receive them:
+Events: task.created, task.updated. They are sent when create_task or update_task changes a task, and also
+when a task file is saved through write_file or the browser app (then `via` says which, and `changed` lists
+what differs). Edits made directly on disk are not seen. Two ways to receive them:
 - Webhooks: a subscription is verified with a url_verification challenge, then each event
   is POSTed to its webhook signed with Standard Webhooks headers (webhook-id,
   webhook-timestamp, webhook-signature), retried with backoff. Webhook URLs must be public
@@ -460,9 +462,13 @@ class Handler(SimpleHTTPRequestHandler):
     def api_put_files(self, query):
         # resolve and validate the path before reading a body of any size
         self.workspace.writable(self.workspace.resolve(query.get("path"))[0])
+        body = self.read_body()
+        events = McpServer(self.workspace)
+        before = events.snapshot(query.get("path"))
         created, rev = self.workspace.write(
-            query.get("path"), self.read_body(),
+            query.get("path"), body,
             self.headers.get("If-Match"), self.headers.get("If-None-Match"))
+        events.write_event(query.get("path"), before, created, "http-api")
         self.send(HTTPStatus.CREATED if created else HTTPStatus.OK, "", headers={"ETag": rev})
 
     def api_post_mkdir(self, query):
@@ -916,7 +922,9 @@ class EventStreams:
         self.lock = threading.Lock()
         self.streams = []
         self.recent = collections.deque(maxlen=STREAM_REPLAY)  # (seq, event name, payload, message)
-        self.seq = 0
+        # Start from the clock, not from 0: a client that reconnects after this server restarted sends the
+        # Last-Event-ID of the old process, and event numbers that start over would sit below it and be skipped.
+        self.seq = int(time.time() * 1000)
 
     def open(self, stream):
         with self.lock:
@@ -1657,12 +1665,63 @@ class McpServer:
             raise ApiError(HTTPStatus.CONFLICT, "not a UTF-8 text file")
         return {"path": path, "revision": rev, "content": content}
 
+    # -- events for plain writes of task files (the browser app, write_file) --
+
+    def snapshot(self, path):
+        """The text of an existing file before it is overwritten, or None (missing, unreadable, not text)."""
+        try:
+            return self.workspace.read(path)[0].decode("utf-8")
+        except (OSError, ApiError, UnicodeDecodeError):
+            return None
+
+    def write_event(self, path, before, created, via):
+        """After a plain write of a task file, send task.created or task.updated like create_task and
+        update_task do, with `changed` listing what differs from `before`. Never raises: a write has
+        already happened and must not fail because of an event."""
+        try:
+            parts = self.workspace.resolve(path)[1].split("/")
+            is_task = len(parts) >= 3 and parts[1] == "tasks" and parts[-1].lower().endswith(".md") \
+                and (len(parts) == 3 or (len(parts) == 4 and parts[-1].lower() == "readme.md"))
+            if not is_task:
+                return
+            model, _ = self.load_project(parts[0])
+            data, rev = self.workspace.read(path)
+            text = data.decode("utf-8")
+            payload = dict(self.public(self.task_summary(path, text, rev, model)), project=parts[0], via=via)
+            if created or before is None:
+                emit_mcp_event("task.created", payload)
+                return
+            changed = self.changed_fields(before, text)
+            if changed:
+                emit_mcp_event("task.updated", dict(payload, changed=changed))
+        except Exception as e:
+            print("MCP event for %s not sent: %r" % (path, e), file=sys.stderr)
+
+    @staticmethod
+    def changed_fields(before, after):
+        """Names of what differs between two versions of a task file, using update_task's field names."""
+        old_fields, old_body = frontmatter(before)
+        new_fields, new_body = frontmatter(after)
+        keys = {name: name for name in TASK_FIELDS}
+        keys.update({name: key for name, key in RELATIONS.items()})
+        changed = [name for name, key in keys.items() if old_fields.get(key, "") != new_fields.get(key, "")]
+        known = set(keys.values())
+        if any(old_fields.get(k) != new_fields.get(k) for k in (set(old_fields) | set(new_fields)) - known):
+            changed.append("frontmatter")
+        if title_of(old_body, "") != title_of(new_body, ""):
+            changed.append("title")
+        if old_body != new_body:
+            changed.append("content")
+        return sorted(changed)
+
     def tool_write_file(self, args):
         path = self.arg(args, "path")
         data = self.arg(args, "content").encode("utf-8")
         rev = self.arg(args, "revision", False)
         # with a revision: replace only that version; without: create only
+        before = self.snapshot(path)
         created, new_rev = self.workspace.write(path, data, if_match=rev, if_none_match=None if rev else "*")
+        self.write_event(path, before, created, "write_file")
         return {"path": path, "created": created, "revision": new_rev}
 
     def tool_make_folder(self, args):

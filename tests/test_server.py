@@ -742,6 +742,36 @@ class EventStreamTest(unittest.TestCase):
         self.assertGreater(seq2, seq)
         self.assertEqual((note["params"]["type"], note["params"]["data"]["changed"]), ("task.updated", ["status"]))
 
+    def put(self, path, text, headers):
+        """Save a file the way the browser app does; returns the new ETag."""
+        req = Request("http://127.0.0.1:%d/api/files?path=%s" % (self.port, path), method="PUT", data=text.encode(),
+                      headers=dict({"X-Taski": "1"}, **headers))
+        with urlopen(req) as res:
+            return res.headers["ETag"]
+
+    def test_streams_saves_from_the_browser_app_and_write_file(self):
+        res = self.open("/mcp?project=alpha")
+        task = "---\ntype: task\nstatus: todo\npriority: normal\n---\n\n# Saved\n"
+        etag = self.put("alpha/tasks/saved.md", task, {"If-None-Match": "*"})
+        _, note = self.next_event(res)
+        self.assertEqual((note["params"]["type"], note["params"]["data"]["title"], note["params"]["data"]["via"]),
+                         ("task.created", "Saved", "http-api"))
+        # a notes file next to the tasks, a task saved unchanged: no events; a status change: one
+        self.put("alpha/notes.md", "# Notes\n", {"If-None-Match": "*"})
+        etag = self.put("alpha/tasks/saved.md", task, {"If-Match": etag})
+        etag = self.put("alpha/tasks/saved.md", task.replace("status: todo", "status: doing"), {"If-Match": etag})
+        _, note = self.next_event(res)
+        data = note["params"]["data"]
+        self.assertEqual((note["params"]["type"], data["status"], data["changed"], data["via"]),
+                         ("task.updated", "doing", ["status"], "http-api"))
+        # write_file reports the same way, and says what else changed
+        self.call("write_file", path="alpha/tasks/saved.md", revision=etag,
+                  content=task.replace("status: todo", "status: done").replace("# Saved", "# Renamed"))
+        _, note = self.next_event(res)
+        data = note["params"]["data"]
+        self.assertEqual((note["params"]["type"], data["title"], data["changed"], data["via"]),
+                         ("task.updated", "Renamed", ["content", "status", "title"], "write_file"))
+
     def test_event_and_project_scope(self):
         created_only = self.open("/mcp?event=task.created")
         alpha_endpoint = self.open("/mcp/alpha")
