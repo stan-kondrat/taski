@@ -46,6 +46,15 @@ class NotFoundError extends Error {
   }
 }
 
+class ForbiddenError extends Error {
+  /** @param {string} path */
+  constructor(path) {
+    super(`Not allowed: ${path}`);
+    this.name = 'ForbiddenError';
+    this.path = path;
+  }
+}
+
 class ConflictError extends Error {
   /** @param {string} path */
   constructor(path) {
@@ -62,5 +71,5 @@ class ReadOnlyError extends Error {
   }
 }
 
-Taski.storage = { NotFoundError, ConflictError, ReadOnlyError };
+Taski.storage = { NotFoundError, ForbiddenError, ConflictError, ReadOnlyError };
 })(window.Taski = window.Taski || {});

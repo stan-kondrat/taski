@@ -392,6 +392,18 @@ button.small { font-size: 12px; padding: 2px 8px; }
 button.milestone { cursor: pointer; font-weight: 500; }
 button.milestone:hover { border-color: var(--accent); }
 
+.rel { font-size: 12px; line-height: 1.5; padding: 0 8px; border-radius: 4px; border: 1px solid var(--line); white-space: nowrap; }
+.rel.blocked { color: var(--s-blocked); border-color: var(--s-blocked); }
+.rel.blocking { color: var(--muted); }
+.relations .rel-groups { display: flex; flex-wrap: wrap; gap: 8px 32px; margin-bottom: 8px; }
+.relations .rel-group h3 { margin: 0 0 4px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.relations .rel-group ul { margin: 0; padding: 0; list-style: none; }
+.relations .rel-group li { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.relations .rel-group li.closed a { text-decoration: line-through; color: var(--muted); }
+.relations .rel-group .status { font-size: 12px; color: var(--muted); }
+.relations .rel-group li.missing code { color: var(--s-blocked); }
+.relations form.quick select { flex: 0 0 auto; }
+
 .milestone-bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
 .milestone-bar:empty { display: none; }
 .milestone-card { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 6px 12px; min-width: 140px; text-align: left; background: var(--panel); border-radius: var(--radius); }

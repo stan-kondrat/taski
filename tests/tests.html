@@ -233,6 +233,43 @@
       eq(s.files.get('p/tasks/a.md'), '---\n---\n# A\n');
     });
 
+    test('relations: either task records one, both show it', async () => {
+      const s = memStorage({
+        'README.md': '# WS\n\n## Projects\n\n- [P](./p/)\n- [Q](./q/)\n',
+        'p/README.md': '---\ntype: project\n---\n# P\n',
+        'p/tasks/a.md': '---\nblocked-by: b, q/x, nope\n---\n# A\n',
+        'p/tasks/b.md': '---\nstatus: doing\nrelated: c\n---\n# B\n',
+        'p/tasks/c.md': '---\nstatus: done\nblocks: a\n---\n# C\n',
+        'p/tasks/d.md': '---\nblocks: e, d\n---\n# D\n',
+        'p/tasks/e.md': '---\nblocked-by: d\n---\n# E\n',
+        'q/README.md': '---\ntype: project\n---\n# Q\n',
+        'q/tasks/x.md': '---\nstatus: done\n---\n# X\n',
+      });
+      const { isBlocked } = Taski.tasks;
+      const ws = await loadWorkspace(s);
+      const task = (title) => ws.projects.flatMap((p) => p.tasks).find((t) => t.title === title);
+      const refs = (list) => list.map((r) => `${r.slug}${r.here ? '' : ' (there)'}${r.closed ? ' closed' : ''}`);
+      const a = task('A');
+      eq(refs(a.relations.blockedBy), ['b', 'x closed', 'c (there) closed']);
+      eq(a.relations.missing, ['nope']);
+      eq(a.relations.blockedBy[1].project, 'q');
+      eq([isBlocked(a), isBlocked(task('B')), isBlocked(task('C')), isBlocked(task('X'))], [true, false, false, false]);
+      eq(refs(task('B').relations.blocks), ['a (there)']);
+      eq(refs(task('B').relations.related), ['c closed']);
+      eq(refs(task('C').relations.related), ['b (there)']);
+      eq(refs(task('C').relations.blocks), ['a']);
+      eq(refs(task('X').relations.blocks), ['a (there)']);
+      // written on both tasks: one entry, removable from either side; a task never relates to itself
+      eq([refs(task('D').relations.blocks), refs(task('E').relations.blockedBy)], [['e'], ['d']]);
+      eq(task('D').relations.blockedBy, []);
+      // closing the only open blocker unblocks
+      const b = task('B');
+      await Taski.tasks.setTaskField(s, b, 'status', 'done');
+      eq(isBlocked(task('E')), true);
+      const again = await loadWorkspace(s);
+      eq(isBlocked(again.projects[0].tasks.find((t) => t.title === 'A')), false);
+    });
+
     test('setProjectFields edits the README in one write', async () => {
       const s = memStorage({ 'p/README.md': '---\ntype: project\nowner: me\n---\n# P\n', 'p/tasks/a.md': '# A\n' });
       const project = await Taski.projects.loadProject(s, 'p');

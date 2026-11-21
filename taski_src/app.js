@@ -14,7 +14,7 @@ const { detectPythonServer, pythonStorage } = Taski.python;
 const { scopedStorage } = Taski.scoped;
 const { supported: pickedSupported, pickedStorage, chooseFolderFiles } = Taski.picked;
 const { ConflictError } = Taski.storage;
-const { createTask, loadTask, saveTask, setTaskCheck, setTaskField } = Taski.tasks;
+const { createTask, linkRelations, loadTask, saveTask, setTaskCheck, setTaskField } = Taski.tasks;
 const { h } = Taski.dom;
 const { fileHref, fileView, isOpen, overviewView, projectHref, projectView, taskHref, taskView } = Taski.views;
 
@@ -642,6 +642,7 @@ async function replaceTask(/** @type {import('./tasks.js').Task} */ task) {
     const i = p.tasks.findIndex((t) => t.path === task.path);
     if (i >= 0) p.tasks[i] = task;
   }
+  if (workspace) linkRelations(workspace.projects);
   renderSidebar();
   await route();
 }

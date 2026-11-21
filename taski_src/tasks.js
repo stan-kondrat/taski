@@ -110,6 +110,30 @@ function statusKind(wf, status) {
  * @property {string[]} tags
  * @property {{done: number, total: number}} progress
  * @property {RelatedFile[]} files
+ * @property {string[]} blockedBy   Tasks named in this task's own `blocked-by` field, as written.
+ * @property {string[]} blocks      Tasks named in its `blocks` field.
+ * @property {string[]} related     Tasks named in its `related` field.
+ * @property {Relations} relations  Both directions, resolved by `linkRelations` once the workspace is loaded.
+ */
+
+/**
+ * A task as seen from another task's relations.
+ * @typedef {Object} TaskRef
+ * @property {string} path     Entry file of the task.
+ * @property {string} slug
+ * @property {string} title
+ * @property {string} status
+ * @property {string} project  Path of the task's project.
+ * @property {boolean} closed  In a closed status of its own project.
+ * @property {boolean} here    Written in this task's own fields, not only in the other task's.
+ */
+
+/**
+ * @typedef {Object} Relations
+ * @property {TaskRef[]} blockedBy
+ * @property {TaskRef[]} blocks
+ * @property {TaskRef[]} related
+ * @property {string[]} missing  Names in the task's own fields that match no task.
  */
 
 /**
@@ -136,6 +160,10 @@ function parseTask(path, text, rev) {
     milestone: fm.fields.get('milestone') || '',
     tags: (fm.fields.get('tags') || '').split(',').map((t) => t.trim()).filter(Boolean),
     progress: { done: items.filter((i) => i.done).length, total: items.length },
+    blockedBy: splitList(fm.fields.get('blocked-by')),
+    blocks: splitList(fm.fields.get('blocks')),
+    related: splitList(fm.fields.get('related')),
+    relations: { blockedBy: [], blocks: [], related: [], missing: [] },
     files: sectionLinks(text, 'Files').map((l) => ({ text: l.text, href: l.href, path: resolveRelative(path, l.href) })),
   };
 }
@@ -147,6 +175,56 @@ function parseTask(path, text, rev) {
 async function loadTask(storage, path) {
   const { text, rev } = await storage.read(path);
   return parseTask(path, text, rev);
+}
+
+/** Frontmatter field of each relation. */
+const RELATION_FIELDS = { blockedBy: 'blocked-by', blocks: 'blocks', related: 'related' };
+const RELATION_INVERSE = { blockedBy: 'blocks', blocks: 'blockedBy', related: 'related' };
+
+/**
+ * Resolve the `blocked-by`, `blocks` and `related` fields of every task into
+ * `task.relations`. A name is a task's folder or file name in the same project,
+ * or `project/name` for a task in another one. Either task may record a
+ * relation: it shows on both, so `A: blocks: B` equals `B: blocked-by: A`.
+ * @param {{path: string, workflow: Workflow, tasks: Task[]}[]} projects
+ */
+function linkRelations(projects) {
+  /** @type {Map<string, {task: Task, project: (typeof projects)[number]}>} */
+  const index = new Map();
+  for (const project of projects) {
+    for (const task of project.tasks) {
+      task.relations = { blockedBy: [], blocks: [], related: [], missing: [] };
+      index.set(join(project.path, task.slug), { task, project });
+    }
+  }
+  const refTo = (/** @type {{task: Task, project: (typeof projects)[number]}} */ { task, project }, /** @type {boolean} */ here) => ({
+    path: task.path, slug: task.slug, title: task.title, status: task.status, project: project.path,
+    closed: statusKind(project.workflow, task.status) === 'closed', here,
+  });
+  const add = (/** @type {Task} */ task, /** @type {'blockedBy' | 'blocks' | 'related'} */ kind, /** @type {TaskRef} */ ref) => {
+    const found = task.relations[kind].find((r) => r.path === ref.path);
+    if (found) found.here = found.here || ref.here;
+    else task.relations[kind].push(ref);
+  };
+  for (const project of projects) {
+    for (const task of project.tasks) {
+      for (const kind of /** @type {('blockedBy' | 'blocks' | 'related')[]} */ (Object.keys(RELATION_FIELDS))) {
+        for (const name of task[kind]) {
+          const target = index.get(name.includes('/') ? join(name) : join(project.path, name));
+          if (!target) task.relations.missing.push(name);
+          else if (target.task !== task) {
+            add(task, kind, refTo(target, true));
+            add(target.task, RELATION_INVERSE[kind], refTo({ task, project }, false));
+          }
+        }
+      }
+    }
+  }
+}
+
+/** Whether a task has an unfinished blocker. @param {Task} task */
+function isBlocked(task) {
+  return task.relations.blockedBy.some((r) => !r.closed);
 }
 
 /**
@@ -248,7 +326,8 @@ async function createTask(storage, project, { title, singleFile = false }) {
   for (let n = 2; await exists(storage, pathFor(slug)); n++) slug = `${base}-${n}`;
   const path = pathFor(slug);
   const text = ['---', 'type: task', `status: ${status}`, 'priority: normal', `created: ${today()}`, '---', '', `# ${title}`, '', ''].join('\n');
-  if (!singleFile) await storage.mkdir(dirname(path));
+  // Always: a single-file task still needs tasks/, which a new project lacks.
+  await storage.mkdir(dirname(path));
   const { rev } = await storage.write(path, text, { create: true });
 
   const readme = project.readmePath;
@@ -264,6 +343,6 @@ async function createTask(storage, project, { title, singleFile = false }) {
 
 Taski.tasks = {
   STATUSES, PRIORITIES, DEFAULT_WORKFLOW, splitList, workflowFrom, milestonesFrom, formatMilestones, statusKind, statusRank,
-  parseTask, loadTask, saveTask, setTaskField, setTaskCheck, compareTasks, taskComparator, today, exists, createTask,
+  RELATION_FIELDS, linkRelations, isBlocked, parseTask, loadTask, saveTask, setTaskField, setTaskCheck, compareTasks, taskComparator, today, exists, createTask,
 };
 })(window.Taski = window.Taski || {});

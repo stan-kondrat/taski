@@ -20,6 +20,7 @@ Taski's own roadmap, kept as Taski files. This project has its own task statuses
 - [Ship the MVP](./tasks/ship-mvp.md)
 - [Statuses, labels and files per project](./tasks/project-workflows.md)
 - [Milestones](./tasks/milestones.md)
+- [Task relations](./tasks/task-relations.md)
 
 ## Files
 

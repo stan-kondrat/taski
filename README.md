@@ -65,10 +65,25 @@ a reverse proxy with HTTPS and a password.
 ### MCP for AI agents
 
 `server.py` also speaks the [Model Context Protocol](https://modelcontextprotocol.io), so an
-agent can read and edit the same workspace. Tools: `list_projects`, `list_files`, `read_file`,
-`write_file`, `make_folder`, `move_file`, `delete_file`. The agent gets the same limits as the
-browser (Markdown and text files only, nothing outside the root, atomic writes) and
-`write_file` refuses to overwrite a file that changed since `read_file` returned its revision.
+agent can read and edit the same workspace. The agent gets the same limits as the browser
+(Markdown and text files only, nothing outside the root, atomic writes).
+
+| Tool | What it does |
+|------|--------------|
+| `list_projects` | The project folders the agent may use. |
+| `get_project` | A project's statuses, labels and milestones with progress (done of total). |
+| `list_tasks` | Tasks with status, priority, due date, milestone, tags, checklist progress and relations (`blocked_by`, `blocks`, `related`, and `blocked` while a blocker is unfinished); filter by `status`, `milestone`, `tag`, `open_only` or `blocked`. `open_only` with `blocked: false` gives the tasks ready to start. |
+| `create_task` | A new task file, linked under `## Tasks` in the project README, optionally with a milestone, tags and relations. |
+| `update_task` | Change `status`, `priority`, `due`, `milestone`, `tags`, `blocked_by`, `blocks` or `related`, touching only those lines. Relations must name existing tasks and cannot make a task block itself. |
+| `list_files`, `read_file`, `write_file`, `make_folder`, `move_file`, `delete_file` | Plain file access for everything else. |
+
+`create_task` and `update_task` check values against the project: a status must be one of its
+`statuses`, a milestone one of its `milestones`, a date a real `YYYY-MM-DD`. A refusal says
+what is allowed, so the agent can correct itself. `write_file` and `update_task` refuse to
+overwrite a file that changed since the agent read it (the `revision` from `read_file` or
+`list_tasks`). Every tool carries MCP annotations (read-only, destructive, idempotent) so
+clients can skip approval prompts for the read-only ones, and results come as text and as
+structured content.
 
 ```bash
 # stdio: the agent starts the server itself
@@ -84,11 +99,37 @@ Limit an agent to some projects (top-level folders) with `--project`, repeated a
 python3 server.py --mcp --root ~/Documents/taski --project website --project app
 ```
 
-With HTTP, `--project` limits `/mcp`, and `/mcp/website` narrows one connection to a single
-project, so one server can give each agent its own project. Root files such as `AGENTS.md`
-stay readable. The browser app is not affected by `--project`. This keeps an agent out of other
+With HTTP, `--project` limits `/mcp` and the browser app served by the same process, and
+`/mcp/website` narrows one connection to a single project, so one server can give each agent
+its own project. Root files such as `AGENTS.md` stay readable (but read-only). To use the whole
+workspace in the browser while an agent is limited, run a second server without `--project`
+on another port. This keeps an agent out of other
 projects; it is not a security boundary against anything else that can read your disk or
 reach the server's port.
+
+#### Events
+
+When `create_task` or `update_task` changes a task, the server sends a `task.created` or
+`task.updated` event (the task, plus `changed` for updates). You can receive events in two ways:
+
+- **Event stream (server-sent events).** `GET /mcp` (or `/mcp/PROJECT`) with
+  `Accept: text/event-stream` keeps the connection open and sends each event as a JSON-RPC
+  notification `notifications/events/event`. Filter in the query with `event`, `project`,
+  `status`, `priority` or `tag`. Every message has an `id`: reconnect with `Last-Event-ID`
+  to get the recent events (up to 100) you missed.
+
+  ```bash
+  curl -N -H 'Accept: text/event-stream' 'http://127.0.0.1:8000/mcp?event=task.created&project=website'
+  ```
+
+- **Webhooks.** `events/subscribe` with a `webhook` (`url` and a `whsec_` secret) checks the
+  URL with a challenge, then POSTs each event to it, signed with
+  [Standard Webhooks](https://www.standardwebhooks.com) headers and retried with backoff.
+  Webhook URLs must be public https unless the server runs with `--allow-private-webhooks`.
+
+Streams and subscriptions live in memory and end when the server stops. Only `create_task` and
+`update_task` send events (not `write_file`, the browser or edits on disk), and the stdio transport
+has no event stream.
 
 ## URL parameters
 
@@ -188,6 +229,11 @@ tags: kubernetes, raspberry-pi
 - `status`: `todo`, `doing`, `blocked`, `done`, `cancelled`, unless the project sets its own
   (below). `priority`: `low`, `normal`, `high`. Dates: `YYYY-MM-DD`. `tags`: the task's labels.
   `milestone`: one of the project's milestones (below).
+- `blocked-by`, `blocks`, `related`: relations to other tasks, comma-separated, as in Linear. A
+  name is a task's file or folder name (`fix-login`), or `project/name` for another project's
+  task. Write a relation on either task and Taski shows it on both: `blocks: B` on A means the
+  same as `blocked-by: A` on B. A task shows as blocked until its blockers are in a closed
+  status. A task cannot block itself, directly or through other tasks.
 - The first `# Heading` is the title. Unknown fields and all other text are kept as they are.
 - `## Files` in a task or project README links its documents: relative paths or URLs.
   Taski lists them with previews, next to unlinked files it finds in the same folder.

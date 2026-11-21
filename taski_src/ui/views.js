@@ -7,7 +7,7 @@
 const { h, select } = Taski.dom;
 const { parseFrontmatter, renderMarkdown, withoutSection } = Taski.markdown;
 const { basename, dirname, join, resolveRelative } = Taski.path;
-const { DEFAULT_WORKFLOW, PRIORITIES, formatMilestones, milestonesFrom, splitList, statusKind, today } = Taski.tasks;
+const { DEFAULT_WORKFLOW, PRIORITIES, RELATION_FIELDS, formatMilestones, milestonesFrom, splitList, statusKind, today } = Taski.tasks;
 const { canPreview, fileKind, listAttachments, projectOwner, taskOwner } = Taski.files;
 
 /**
@@ -188,6 +188,22 @@ function milestoneChip(ctx, t, project) {
     : h('span.milestone', { title: 'Milestone' }, t.milestone);
 }
 
+/**
+ * "Blocked by 2" while a task has unfinished blockers, "Blocks 1" while it holds
+ * up unfinished tasks. Nothing for a finished task.
+ * @param {import('../tasks.js').Task} t
+ * @param {import('../projects.js').Project} [project]
+ */
+function relationChips(t, project) {
+  if (!isOpen(t, project)) return null;
+  const by = t.relations.blockedBy.filter((r) => !r.closed);
+  const of = t.relations.blocks.filter((r) => !r.closed);
+  return [
+    by.length ? h('span.rel.blocked', { title: `Blocked by ${by.map((r) => r.title).join(', ')}` }, `⛔ blocked by ${by.length}`) : null,
+    of.length ? h('span.rel.blocking', { title: `Blocking ${of.map((r) => r.title).join(', ')}` }, `⏳ blocks ${of.length}`) : null,
+  ];
+}
+
 /** @param {{done: number, total: number}} p */
 function progress(p) {
   if (!p.total) return null;
@@ -222,6 +238,7 @@ function taskRow(ctx, t, project, showProject = false) {
     t.priority !== 'normal' ? h(`span.prio.p-${t.priority}`, { title: 'Priority' }, t.priority) : null,
     showProject && project ? h('a.proj', { href: projectHref(project.path) }, project.title) : null,
     milestoneChip(ctx, t, project),
+    relationChips(t, project),
     taskLabels(ctx, t, project),
     t.files.length ? h('span.attach', { title: `${t.files.length} attached file${t.files.length > 1 ? 's' : ''}` }, `📎 ${t.files.length}`) : null,
     progress(t.progress),
@@ -402,6 +419,7 @@ function board(ctx, project, tasks) {
     h('div.chips', null,
       t.priority !== 'normal' ? h(`span.prio.p-${t.priority}`, null, t.priority) : null,
       milestoneChip(ctx, t, project),
+      relationChips(t, project),
       taskLabels(ctx, t, project),
       t.files.length ? h('span.attach', null, `📎 ${t.files.length}`) : null,
       progress(t.progress),
@@ -617,6 +635,75 @@ function labelEditor(ctx, task, project) {
     h('datalist', { id: listId }, suggestions.map((l) => h('option', { value: l }))));
 }
 
+const RELATION_TITLES = { blockedBy: 'Blocked by', blocks: 'Blocking', related: 'Related' };
+
+/**
+ * Blocked by / blocking / related tasks, as in Linear. A relation written on
+ * either task shows on both; only the ones written here can be removed here.
+ * @param {ViewContext} ctx
+ * @param {import('../tasks.js').Task} task
+ * @param {import('../projects.js').Project | undefined} project
+ */
+function relationsPanel(ctx, task, project) {
+  const canWrite = ctx.storage.canWrite;
+  const rel = task.relations;
+  const kinds = /** @type {('blockedBy' | 'blocks' | 'related')[]} */ (['blockedBy', 'blocks', 'related']);
+  if (!canWrite && !kinds.some((k) => rel[k].length) && !rel.missing.length) return null;
+
+  /** Same rule as `linkRelations`, so removing keeps exactly the other names. @param {string} name */
+  const resolve = (name) => (name.includes('/') ? join(name) : join(project?.path || '', name));
+  const remove = (/** @type {'blockedBy' | 'blocks' | 'related'} */ kind, /** @type {(name: string) => boolean} */ drop) =>
+    ctx.setField(task, RELATION_FIELDS[kind], task[kind].filter((n) => !drop(n)).join(', '));
+  const removeButton = (/** @type {() => void} */ onclick, /** @type {string} */ label) =>
+    canWrite ? h('button.small.remove', { type: 'button', 'aria-label': label, title: label, onclick }, '×') : null;
+
+  const groups = kinds.filter((k) => rel[k].length).map((kind) => h('div.rel-group', null,
+    h('h3', null, RELATION_TITLES[kind]),
+    h('ul', null, rel[kind].map((r) => h(`li${r.closed ? '.closed' : ''}`, null,
+      h('span.status', { title: 'Status' }, r.status),
+      h('a', { href: taskHref(r.path) }, r.title),
+      r.project !== (project?.path || '') ? h('span.muted.small', null, r.project) : null,
+      r.here
+        ? removeButton(() => remove(kind, (n) => resolve(n) === join(r.project, r.slug)), `Remove ${r.title}`)
+        : h('span.muted.small', { title: `Written in ${r.title}, so remove it there` }, 'set there'))))));
+  if (rel.missing.length) {
+    groups.push(h('div.rel-group', null, h('h3', null, 'Not found'),
+      h('ul', null, rel.missing.map((name) => h('li.missing', null, h('code', null, name),
+        removeButton(() => {
+          for (const kind of kinds) if (task[kind].includes(name)) remove(kind, (n) => n === name);
+        }, `Remove ${name}`))))));
+  }
+
+  const kind = /** @type {HTMLSelectElement} */ (h('select', { 'aria-label': 'Relation' },
+    kinds.map((k) => h('option', { value: k }, RELATION_TITLES[k]))));
+  const listId = `rel-${Math.random().toString(36).slice(2)}`;
+  const target = /** @type {HTMLInputElement} */ (h('input', {
+    type: 'text', list: listId, required: true, placeholder: 'Task name, or project/name', 'aria-label': 'Related task',
+    oninput: () => target.setCustomValidity(''),
+  }));
+  const choices = (project?.tasks || []).filter((t) => t.path !== task.path)
+    .map((t) => h('option', { value: t.slug }, t.title));
+  const form = h('form.quick', {
+    onsubmit: (/** @type {Event} */ e) => {
+      e.preventDefault();
+      const name = target.value.trim();
+      const k = /** @type {'blockedBy' | 'blocks' | 'related'} */ (kind.value);
+      const found = allTasks(ctx.workspace).find((x) => join(x.project.path, x.task.slug) === resolve(name));
+      if (!found || found.task.path === task.path) {
+        target.setCustomValidity(found ? 'A task cannot relate to itself' : 'No task with that name. Use its folder or file name.');
+        target.reportValidity();
+        return;
+      }
+      if (task[k].some((n) => resolve(n) === resolve(name))) return;
+      ctx.setField(task, RELATION_FIELDS[k], [...task[k], name].join(', '));
+    },
+  }, kind, target, h('datalist', { id: listId }, choices), h('button', { type: 'submit' }, 'Add'));
+
+  return h('section.panel.relations', null, h('h2', null, 'Relations'),
+    groups.length ? h('div.rel-groups', null, groups) : h('p.muted', null, 'No related tasks.'),
+    canWrite ? form : null);
+}
+
 const KIND_ICON = { markdown: '📝', text: '📄', image: '🖼️', pdf: '📕', link: '🔗', other: '📦' };
 
 /**
@@ -759,7 +846,7 @@ function taskView(ctx, task, project, ui) {
     input.addEventListener('change', () => ctx.setCheck(task, Number(input.dataset.check), input.checked));
   }
 
-  const known = new Set(['type', 'status', 'priority', 'due', 'created', 'tags', 'milestone']);
+  const known = new Set(['type', 'status', 'priority', 'due', 'created', 'tags', 'milestone', ...Object.values(RELATION_FIELDS)]);
   const extra = [...task.fields].filter(([k]) => !known.has(k));
 
   return h('section.view.task', null,
@@ -773,6 +860,7 @@ function taskView(ctx, task, project, ui) {
       h('div.field.grow', null, h('span', null, 'Labels'), labelEditor(ctx, task, project)),
       progress(task.progress)),
     extra.length ? h('dl.extra', null, extra.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])) : null,
+    relationsPanel(ctx, task, project),
     body.childElementCount ? body : h('p.muted', null, 'No description.'),
     filesPanel(ctx, taskOwner(task, project), 'Files'),
     h('div.actions', null,

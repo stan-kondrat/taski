@@ -6,8 +6,8 @@
 
 const { appendToSection, getTitle, parseFrontmatter, sectionLinks, setField, slugify } = Taski.markdown;
 const { basename, dirname, join, relativeLink, resolveRelative } = Taski.path;
-const { NotFoundError } = Taski.storage;
-const { loadTask, milestonesFrom, splitList, taskComparator, workflowFrom } = Taski.tasks;
+const { ForbiddenError, NotFoundError } = Taski.storage;
+const { linkRelations, loadTask, milestonesFrom, splitList, taskComparator, workflowFrom } = Taski.tasks;
 
 /**
  * @typedef {Object} FileText
@@ -155,7 +155,7 @@ async function loadProject(storage, path) {
     if (!milestones.some((m) => m.name === name)) milestones.push({ name, due: '', listed: false });
   }
 
-  return {
+  const project = {
     path,
     readmePath,
     readme,
@@ -168,6 +168,8 @@ async function loadProject(storage, path) {
     tasks: tasks.sort(taskComparator(workflow)),
     warnings,
   };
+  linkRelations([project]);
+  return project;
 }
 
 /**
@@ -202,10 +204,20 @@ async function loadWorkspace(storage) {
     if (isProject) folders.add(e.path);
   }
 
-  const projects = await Promise.all([...folders].map((f) => loadProject(storage, f)));
+  // A server started with --project refuses the other projects the root README links to: leave them out.
+  const loadedProjects = await Promise.all(
+    [...folders].map((f) =>
+      loadProject(storage, f).catch((e) => {
+        if (e instanceof ForbiddenError) return null;
+        throw e;
+      }),
+    ),
+  );
+  const projects = /** @type {Project[]} */ (loadedProjects.filter(Boolean));
   for (const p of projects) {
     if (!p.readme && !p.tasks.length) warnings.push(`Linked project has no README.md or tasks: ${p.path}`);
   }
+  linkRelations(projects);
   projects.sort((a, b) => Number(a.status === 'archived') - Number(b.status === 'archived') || a.title.localeCompare(b.title));
   return {
     readme,

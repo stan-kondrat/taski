@@ -20,6 +20,9 @@ no nesting, no multi-line values, no duplicate keys.
 | `created`  | `YYYY-MM-DD`                                  |
 | `tags`     | task labels, comma-separated                  |
 | `milestone`| task: one of the project's `milestones`       |
+| `blocked-by` | task: tasks that must finish first, comma-separated |
+| `blocks`   | task: tasks that wait for this one, comma-separated |
+| `related`  | task: tasks that are related, comma-separated |
 
 A project README may set its own task statuses and labels:
 
@@ -45,6 +48,12 @@ add a milestone, add it to the project README first.
 
 The first `# Heading` is the title. Everything else is free Markdown. Checklists use
 `- [ ]` and `- [x]`.
+
+Task relations (`blocked-by`, `blocks`, `related`) name tasks by their file or folder name
+(`fix-login` for `tasks/fix-login.md` or `tasks/fix-login/README.md`), or `project/name` for
+a task in another project. Write a relation on one task only: Taski shows it on both, so
+`A: blocks: B` and `B: blocked-by: A` mean the same. A task is blocked while any task that
+blocks it is not in a closed status. Do not add a task as its own blocker or create cycles.
 
 Attached documents: a task's or project's `## Files` section links related files with
 relative paths, or full URLs for outside documents. Put a folder task's files in its

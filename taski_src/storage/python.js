@@ -3,7 +3,7 @@
 (function (Taski) {
 'use strict';
 
-const { ConflictError, NotFoundError } = Taski.storage;
+const { ConflictError, ForbiddenError, NotFoundError } = Taski.storage;
 const { normalize } = Taski.path;
 
 /**
@@ -17,6 +17,7 @@ function pythonStorage(apiBase = new URL('api/', location.href).href) {
   /** @param {Response} res @param {string} path */
   async function check(res, path) {
     if (res.status === 404) throw new NotFoundError(path);
+    if (res.status === 403) throw new ForbiddenError(path);
     if (res.status === 409 || res.status === 412) throw new ConflictError(path);
     if (!res.ok) throw new Error(`Server error ${res.status}: ${await res.text()}`);
     return res;
