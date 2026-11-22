@@ -75,7 +75,8 @@ agent can read and edit the same workspace. The agent gets the same limits as th
 | `list_tasks` | Tasks with status, priority, due date, milestone, tags, checklist progress and relations (`blocked_by`, `blocks`, `related`, and `blocked` while a blocker is unfinished); filter by `status`, `milestone`, `tag`, `open_only` or `blocked`. `open_only` with `blocked: false` gives the tasks ready to start. |
 | `create_task` | A new task file, linked under `## Tasks` in the project README, optionally with a milestone, tags and relations. |
 | `update_task` | Change `status`, `priority`, `due`, `milestone`, `tags`, `blocked_by`, `blocks` or `related`, touching only those lines. Relations must name existing tasks and cannot make a task block itself. |
-| `list_files`, `read_file`, `write_file`, `make_folder`, `move_file`, `delete_file` | Plain file access for everything else. |
+| `list_files` | Files and folders of a folder, or the whole tree with `recursive`. Each file has `size`, `updated_at` (UTC), `revision` and, with `hash`, `sha256`; `since` lists only files updated at or after a time. See [Catching up](#catching-up). |
+| `read_file`, `write_file`, `make_folder`, `move_file`, `delete_file` | Plain file access for everything else. |
 
 `create_task` and `update_task` check values against the project: a status must be one of its
 `statuses`, a milestone one of its `milestones`, a date a real `YYYY-MM-DD`. A refusal says
@@ -130,8 +131,34 @@ When `create_task` or `update_task` changes a task, the server sends a `task.cre
 Streams and subscriptions live in memory and end when the server stops. A task changed by
 `create_task`/`update_task`, saved from the browser app, or written with `write_file` sends an
 event (events from plain saves carry `via`: `http-api` or `write_file`, and `changed` lists what
-differs: task fields, `title`, `content`, `frontmatter`). Edits made directly on disk are not seen.
+differs: task fields, `title`, `content`, `frontmatter`). Edits made directly on disk are not seen; [`list_files`](#catching-up) finds them.
 The stdio transport has no event stream.
+
+#### Catching up
+
+Events only reach a client while it is connected, and edits made on disk send none. A client that
+starts later (a cold start) or was away asks `list_files` what is there now:
+
+```json
+{"name": "list_files", "arguments": {"recursive": true, "hash": true}}
+```
+
+The reply lists every file the connection may see with `size`, `updated_at`, `revision` and
+`sha256` (`null` for files over 5 MB), and also:
+
+| Field | Meaning |
+|---|---|
+| `next_since` | Pass as `since` next time. It is two seconds before the listing, for coarse file timestamps, so expect some files you already know. |
+| `event_seq` | The latest event number when the listing started. Events above it may be missing from the listing; older ones are in it. Open the event stream before listing and apply the events above `event_seq` afterwards. |
+| `instance` | Changes when the server restarts (event numbers and the replay buffer belong to one process). |
+| `workspace` | The same for the same root folder, so a client can tell it is looking at a different workspace. |
+| `scope` | The projects this connection is limited to, or `null` for all: files outside it are hidden, not deleted. |
+| `truncated` | `true` when the listing stopped at 20,000 entries; narrow `path`. |
+
+Compare the hashes with an earlier listing to find added, changed, deleted and moved files: a
+moved file keeps its hash, a `touch` changes `updated_at` but not `sha256`. `since` is cheaper but
+lists only files updated since then, so it cannot show deletions. Hashes are cached while a file's
+stat is unchanged, so repeated full listings read only files that changed.
 
 ## URL parameters
 

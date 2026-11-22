@@ -44,6 +44,11 @@ what differs). Edits made directly on disk are not seen. Two ways to receive the
   the connection alive. Each SSE message has an `id`; reconnect with `Last-Event-ID` to get
   the recent events you missed.
 Subscriptions and streams live in memory and end when the server stops.
+
+Catching up after being away: list_files with recursive=true and hash=true lists every file with
+size, updated_at, revision and sha256, plus next_since, event_seq, instance and workspace. Compare
+it with an earlier listing to find added, changed, deleted and moved files (since=<time> lists only
+newer files, but cannot show deletions), then follow the event stream from event_seq.
 """
 
 import argparse
@@ -84,8 +89,69 @@ class ApiError(Exception):
 
 
 def revision(path):
-    st = os.stat(path)
+    return revision_of(os.stat(path))
+
+
+def revision_of(st):
     return '"%d-%d"' % (st.st_mtime_ns, st.st_size)
+
+
+_EPOCH = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+
+
+def iso_time(ns):
+    """Nanoseconds since the epoch as UTC ISO 8601 with milliseconds, e.g. 2026-11-21T09:30:00.123Z."""
+    moment = _EPOCH + datetime.timedelta(milliseconds=ns // 1_000_000)
+    return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def parse_time(value, key):
+    """An ISO 8601 date or time (UTC when it has no offset) as nanoseconds since the epoch."""
+    try:
+        moment = datetime.datetime.fromisoformat(value.strip().replace("Z", "+00:00").replace("z", "+00:00"))
+    except ValueError:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "%s must be an ISO 8601 time like 2026-11-21T09:30:00Z" % key)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=datetime.timezone.utc)
+    return (moment - _EPOCH) // datetime.timedelta(microseconds=1) * 1000
+
+
+class HashCache:
+    """SHA-256 of files, kept while a file's stat is unchanged, so listing hashes reads only files that changed.
+    The key includes ctime and the inode: restoring an old mtime (touch -d) or an atomic replace still rehashes."""
+
+    LIMIT = 100_000
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.known = {}
+
+    def get(self, full, st):
+        key = (st.st_mtime_ns, st.st_ctime_ns, st.st_size, st.st_ino)
+        with self.lock:
+            hit = self.known.get(full)
+        if hit is not None and hit[0] == key:
+            return hit[1]
+        if st.st_size > MAX_BODY:
+            return None
+        try:
+            with open(full, "rb") as f:
+                digest = hashlib.sha256(f.read()).hexdigest()
+        except OSError:
+            return None
+        with self.lock:
+            if len(self.known) >= self.LIMIT:
+                self.known.clear()
+            self.known[full] = (key, digest)
+        return digest
+
+
+HASHES = HashCache()
+# Identifies this server process: event numbers and the replay buffer belong to one process.
+SERVER_INSTANCE = secrets.token_hex(8)
+MAX_LIST_ENTRIES = 20_000
+# list_files' next_since is this much earlier than the listing, for coarse filesystem timestamps (FAT keeps 2 s).
+SINCE_MARGIN_NS = 2_000_000_000
 
 
 class Workspace:
@@ -169,6 +235,49 @@ class Workspace:
                 "kind": "dir" if entry.is_dir() else "file",
             })
         return entries
+
+    def details(self, rel, recursive=False, since_ns=None, want_hash=False, limit=MAX_LIST_ENTRIES):
+        """Entries of a folder (or its whole tree) with size, updated_at, revision and optionally sha256.
+        Returns (entries, truncated). Folders are always listed; `since_ns` leaves out files updated before it.
+        Symlinked folders are listed but not entered, so nothing is listed twice and no loop is possible."""
+        full, rel = self.resolve(rel)
+        if not os.path.isdir(full):
+            raise NotADirectoryError("not a folder: %s" % rel)
+        entries = []
+
+        def walk(folder, folder_rel):
+            """Adds the folder's entries, each folder followed by its own; False once the limit is hit."""
+            try:
+                items = sorted(os.scandir(folder), key=lambda e: e.name)
+            except OSError:
+                return True
+            for entry in items:
+                if entry.name.startswith("."):
+                    continue
+                path = (folder_rel + "/" if folder_rel else "") + entry.name
+                try:
+                    target, _ = self.resolve(path)  # scope and symlink checks, as for every other access
+                    st = os.stat(target)
+                except (ApiError, OSError):
+                    continue
+                is_dir = os.path.isdir(target)
+                item = {"name": entry.name, "path": path, "kind": "dir" if is_dir else "file",
+                        "updated_at": iso_time(st.st_mtime_ns)}
+                if not is_dir:
+                    if since_ns is not None and st.st_mtime_ns < since_ns:
+                        continue
+                    item["size"] = st.st_size
+                    item["revision"] = revision_of(st)
+                    if want_hash:
+                        item["sha256"] = HASHES.get(target, st)
+                if len(entries) >= limit:
+                    return False
+                entries.append(item)
+                if is_dir and recursive and not entry.is_symlink() and not walk(target, path):
+                    return False
+            return True
+
+        return entries, not walk(full, rel)
 
     def read(self, rel):
         full, _ = self.resolve(rel)
@@ -725,6 +834,7 @@ _TASK_OUT = {
     "due": {"type": "string"}, "milestone": {"type": "string"},
     "tags": {"type": "array", "items": {"type": "string"}},
     "progress": {"type": "object"}, "revision": {"type": "string"}, "slug": {"type": "string"},
+    "sha256": {"type": "string", "description": "SHA-256 of the task file's content"},
     "blocked": {"type": "boolean", "description": "Has a blocker that is not in a closed status"},
     "blocked_by": {"type": "array", "items": {"type": "object"}},
     "blocks": {"type": "array", "items": {"type": "object"}},
@@ -779,9 +889,21 @@ MCP_TOOLS = [
            "revision": dict(_REVISION, description="Optional: revision from read_file/list_tasks; the update is refused if the file changed since")},
           ["path", "fields"], idempotent=True, output=_TASK_OUT),
     _tool("list_files", "List files",
-          "List the files and folders in a folder.",
-          {"path": {"type": "string", "description": "Folder relative to the workspace root; empty for the root"}}, [],
-          read_only=True, idempotent=True),
+          "List the files and folders in a folder, or with recursive=true its whole tree. Files come with size, "
+          "updated_at (UTC), revision and, with hash=true, sha256 of the content. since=<ISO time> leaves out files "
+          "updated before it (folders are always listed); a deleted file simply is not listed, so to find deletions "
+          "compare a full listing with an earlier one. To keep in sync, pass the reply's next_since as since next "
+          "time, and read event_seq and instance to continue from the event stream.",
+          {"path": {"type": "string", "description": "Folder relative to the workspace root; empty for the root"},
+           "recursive": {"type": "boolean", "description": "List every file and folder below path, not only its direct entries"},
+           "since": {"type": "string", "description": "ISO 8601 time, e.g. 2026-11-21T09:30:00Z: only files updated at or after it"},
+           "hash": {"type": "boolean", "description": "Add sha256 of each file (null for files over 5 MB)"}}, [],
+          read_only=True, idempotent=True,
+          output={"path": {"type": "string"}, "entries": {"type": "array", "items": {"type": "object"}},
+                  "truncated": {"type": "boolean", "description": "true when the listing stopped at its entry limit"},
+                  "server_time": {"type": "string"}, "next_since": {"type": "string"},
+                  "event_seq": {"type": "integer"}, "instance": {"type": "string"}, "workspace": {"type": "string"},
+                  "scope": {"type": ["array", "null"], "items": {"type": "string"}}}),
     _tool("read_file", "Read file",
           "Read a Markdown or text file. Returns its content and revision.", {"path": _PATH}, ["path"],
           read_only=True, idempotent=True),
@@ -953,6 +1075,11 @@ class EventStreams:
                     stream["queue"].queue.clear()
                 stream["queue"].put_nowait(None)  # tell its thread to end; the client reconnects with Last-Event-ID
         return len(streams)
+
+    def current(self):
+        """The number of the latest event; later events get higher numbers."""
+        with self.lock:
+            return self.seq
 
     def since(self, stream, seq):
         """The recent events after `seq` that this stream wants, oldest first."""
@@ -1333,6 +1460,7 @@ class McpServer:
             "tags": split_list(fields.get("tags")),
             "progress": checklist_progress(text),
             "revision": rev,
+            "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
             "blocked": False,
             "blocked_by": [],
             "blocks": [],
@@ -1653,8 +1781,36 @@ class McpServer:
         emit_mcp_event("task.updated", dict(updated, project=project, changed=sorted(fields)))
         return updated
 
+    @staticmethod
+    def flag(args, key):
+        value = args.get(key, False)
+        if not isinstance(value, bool):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "%s must be true or false" % key)
+        return value
+
     def tool_list_files(self, args):
-        return {"entries": self.workspace.list(self.arg(args, "path", False) or "")}
+        path = self.arg(args, "path", False) or ""
+        recursive, want_hash = self.flag(args, "recursive"), self.flag(args, "hash")
+        since = self.arg(args, "since", False)
+        since_ns = parse_time(since, "since") if since else None
+        # Both are read before the walk: an event numbered above event_seq, or a file updated at or after
+        # next_since, may be missing from this listing; anything older is in it.
+        seq = STREAMS.current()
+        started = time.time_ns()
+        entries, truncated = self.workspace.details(path, recursive, since_ns, want_hash)
+        ws = self.workspace
+        return {
+            "path": ws.resolve(path)[1],
+            "entries": entries,
+            "truncated": truncated,
+            "server_time": iso_time(started),
+            "next_since": iso_time(started - SINCE_MARGIN_NS),
+            "event_seq": seq,
+            "instance": SERVER_INSTANCE,
+            # The same folder gives the same id, so a client can tell it is looking at another workspace.
+            "workspace": hashlib.sha256(ws.root.encode("utf-8")).hexdigest()[:16],
+            "scope": list(ws.projects) if ws.projects is not None else None,
+        }
 
     def tool_read_file(self, args):
         path = self.arg(args, "path")

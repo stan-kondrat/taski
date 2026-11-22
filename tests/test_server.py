@@ -514,6 +514,181 @@ class McpTest(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 403)
 
 
+class ListFilesTest(unittest.TestCase):
+    """list_files with times and hashes: what a client needs to catch up after it was away."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.root = os.path.join(self.tmp, "ws")
+        files = {
+            "AGENTS.md": "rules",
+            "alpha/README.md": "# alpha\n",
+            "alpha/notes.md": "notes",
+            "alpha/tasks/one.md": "---\nstatus: todo\n---\n# One\n",
+            "alpha/tasks/two/README.md": "# Two\n",
+            "alpha/tasks/two/log.md": "log",
+            "alpha/.hidden/secret.md": "no",
+            "beta/README.md": "# beta\n",
+        }
+        for rel, text in files.items():
+            full = os.path.join(self.root, *rel.split("/"))
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w") as f:
+                f.write(text)
+        os.symlink(os.path.join(self.root, "beta"), os.path.join(self.root, "alpha", "to-beta"))
+        self.mcp = server.McpServer(server.Workspace(self.root))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def full(self, rel):
+        return os.path.join(self.root, *rel.split("/"))
+
+    def listing(self, mcp=None, **args):
+        result = (mcp or self.mcp).call_tool("list_files", args)
+        self.assertFalse(result["isError"], result["content"][0]["text"])
+        return result["structuredContent"]
+
+    def files(self, **args):
+        return {e["path"]: e for e in self.listing(**args)["entries"] if e["kind"] == "file"}
+
+    def set_mtime(self, rel, seconds):
+        os.utime(self.full(rel), ns=(seconds * 10**9, seconds * 10**9))
+
+    def test_default_lists_one_level_with_details(self):
+        reply = self.listing(path="alpha")
+        self.assertEqual([e["name"] for e in reply["entries"]], ["README.md", "notes.md", "tasks", "to-beta"])
+        notes = reply["entries"][1]
+        st = os.stat(self.full("alpha/notes.md"))
+        self.assertEqual((notes["kind"], notes["size"], notes["revision"]), ("file", 5, server.revision(self.full("alpha/notes.md"))))
+        self.assertEqual(notes["updated_at"], server.iso_time(st.st_mtime_ns))
+        self.assertTrue(notes["updated_at"].endswith("Z"))
+        self.assertNotIn("sha256", notes, "hashing is opt-in")
+        self.assertNotIn("size", reply["entries"][2], "folders have no size")
+        self.assertEqual(reply["path"], "alpha")
+        self.assertFalse(reply["truncated"])
+
+    def test_recursive_lists_the_tree_once(self):
+        paths = [e["path"] for e in self.listing(recursive=True)["entries"]]
+        self.assertEqual(paths, [
+            "AGENTS.md", "alpha", "alpha/README.md", "alpha/notes.md", "alpha/tasks", "alpha/tasks/one.md",
+            "alpha/tasks/two", "alpha/tasks/two/README.md", "alpha/tasks/two/log.md", "alpha/to-beta",
+            "beta", "beta/README.md"])
+        # hidden folders are skipped; the symlinked folder is listed but not entered, so beta is not listed twice
+        self.assertEqual(len(paths), len(set(paths)))
+        self.assertEqual([e["path"] for e in self.listing(path="alpha/tasks", recursive=True)["entries"]],
+                         ["alpha/tasks/one.md", "alpha/tasks/two", "alpha/tasks/two/README.md", "alpha/tasks/two/log.md"])
+
+    def test_hashes_match_content_and_read_file(self):
+        files = self.files(recursive=True, hash=True)
+        for path, entry in files.items():
+            with open(self.full(path), "rb") as f:
+                self.assertEqual(entry["sha256"], hashlib.sha256(f.read()).hexdigest(), path)
+        read = self.mcp.call_tool("read_file", {"path": "alpha/tasks/one.md"})["structuredContent"]
+        self.assertEqual(files["alpha/tasks/one.md"]["revision"], read["revision"])
+        task = self.mcp.call_tool("list_tasks", {"project": "alpha"})["structuredContent"]["tasks"]
+        self.assertEqual({t["path"]: t["sha256"] for t in task}["alpha/tasks/one.md"], files["alpha/tasks/one.md"]["sha256"])
+
+    def test_since_filters_files_and_keeps_folders(self):
+        self.set_mtime("alpha/notes.md", 1_800_000_000)  # 2027-01-15T08:00:00Z
+        self.set_mtime("alpha/tasks/one.md", 1_800_000_001)
+        reply = self.listing(recursive=True, since="2027-01-15T08:00:00Z")
+        self.assertEqual(sorted(e["path"] for e in reply["entries"] if e["kind"] == "file"),
+                         ["alpha/notes.md", "alpha/tasks/one.md"], "a file updated exactly at since is included")
+        self.assertIn("alpha/tasks/two", [e["path"] for e in reply["entries"]], "folders are always listed")
+        self.assertEqual(list(self.files(recursive=True, since="2027-01-15T08:00:00.500+00:00")), ["alpha/tasks/one.md"])
+        self.assertEqual(list(self.files(recursive=True, since="2027-01-15T09:00:00+01:00")), ["alpha/notes.md", "alpha/tasks/one.md"])
+        self.assertEqual(list(self.files(recursive=True, since="2099-01-01")), [])
+        for bad in ("yesterday", "2027-13-01", ""):
+            result = self.mcp.call_tool("list_files", {"since": bad, "recursive": True})
+            if bad:
+                self.assertTrue(result["isError"], bad)
+                self.assertIn("ISO 8601", result["content"][0]["text"])
+            else:
+                self.assertFalse(result["isError"], "an empty since means no filter")
+        for key in ("recursive", "hash"):
+            self.assertTrue(self.mcp.call_tool("list_files", {key: "yes"})["isError"], key)
+
+    def test_hash_and_time_tell_different_things(self):
+        self.set_mtime("alpha/notes.md", 1_800_000_000)  # whole seconds: some filesystems drop sub-second times
+        before = self.files(recursive=True, hash=True)["alpha/notes.md"]
+        # same size, mtime set back: updated_at is the same, only the hash shows the edit
+        with open(self.full("alpha/notes.md"), "w") as f:
+            f.write("NOTES")
+        self.set_mtime("alpha/notes.md", 1_800_000_000)
+        edited = self.files(recursive=True, hash=True)["alpha/notes.md"]
+        self.assertEqual((edited["updated_at"], edited["size"], edited["revision"]), (before["updated_at"], 5, before["revision"]))
+        self.assertNotEqual(edited["sha256"], before["sha256"])
+        # touch: a new time, the same content
+        self.set_mtime("alpha/notes.md", 1_900_000_000)
+        touched = self.files(recursive=True, hash=True)["alpha/notes.md"]
+        self.assertNotEqual(touched["updated_at"], edited["updated_at"])
+        self.assertEqual(touched["sha256"], edited["sha256"])
+
+    def test_hash_cache_reads_only_changed_files(self):
+        self.files(recursive=True, hash=True)
+        opened = []
+        real_open = open
+
+        def counting_open(path, *args, **kwargs):
+            opened.append(path)
+            return real_open(path, *args, **kwargs)
+
+        server.open = counting_open  # module-level name lookups find this before the builtin
+        try:
+            self.files(recursive=True, hash=True)
+            self.assertEqual(opened, [], "nothing changed, nothing read")
+            with real_open(self.full("alpha/notes.md"), "w") as f:
+                f.write("changed!")
+            files = self.files(recursive=True, hash=True)
+            self.assertEqual(opened, [self.full("alpha/notes.md")])
+            self.assertEqual(files["alpha/notes.md"]["sha256"], hashlib.sha256(b"changed!").hexdigest())
+        finally:
+            del server.open
+
+    def test_scope_limits_the_tree(self):
+        for mcp in (server.McpServer(server.Workspace(self.root, ["alpha"])),
+                    server.McpServer(server.Workspace(self.root).narrowed("alpha"))):
+            reply = self.listing(mcp, recursive=True, hash=True)
+            paths = [e["path"] for e in reply["entries"]]
+            self.assertIn("AGENTS.md", paths, "root files stay listed")
+            self.assertFalse([p for p in paths if p.startswith("beta")], paths)
+            self.assertNotIn("alpha/to-beta", paths, "a symlink into another project is out of scope")
+            self.assertEqual(reply["scope"], ["alpha"])
+        self.assertIsNone(self.listing()["scope"])
+
+    def test_limits(self):
+        saved = server.MAX_BODY
+        server.MAX_BODY = 4  # notes.md (5 bytes) is now too large to hash
+        try:
+            files = self.files(recursive=True, hash=True)
+            self.assertIsNone(files["alpha/notes.md"]["sha256"])
+            self.assertIsNotNone(files["alpha/tasks/two/log.md"]["sha256"])
+        finally:
+            server.MAX_BODY = saved
+        entries, truncated = server.Workspace(self.root).details("", recursive=True, limit=3)
+        self.assertEqual((len(entries), truncated), (3, True))
+
+    def test_sync_fields(self):
+        saved = server.STREAMS
+        server.STREAMS = server.EventStreams()
+        try:
+            first = self.listing()
+            self.mcp.call_tool("update_task", {"path": "alpha/tasks/one.md", "fields": {"status": "done"}})
+            second = self.listing()
+        finally:
+            server.STREAMS = saved
+        self.assertEqual(second["event_seq"], first["event_seq"] + 1)
+        self.assertEqual((first["instance"], first["workspace"]), (second["instance"], second["workspace"]))
+        self.assertEqual(len(first["workspace"]), 16)
+        now = time.time_ns()
+        served = server.parse_time(first["server_time"], "t")
+        self.assertLess(abs(now - served), 5 * 10**9)
+        self.assertEqual(served - server.parse_time(first["next_since"], "t"), server.SINCE_MARGIN_NS)
+        other = tempfile.mkdtemp(dir=self.tmp)
+        self.assertNotEqual(self.listing(server.McpServer(server.Workspace(other)))["workspace"], first["workspace"])
+
+
 class EventsTest(unittest.TestCase):
     SECRET = "whsec_" + "MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"
 
