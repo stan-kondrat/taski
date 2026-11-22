@@ -236,6 +236,12 @@ async function driveStorage(clientId, rootPath = 'taski', { fullAccess = false, 
     return String((await (await call(`${API}/files/${id}?fields=version`)).json()).version);
   }
 
+  /** Version and last change time of a file. @param {string} id */
+  async function meta(id) {
+    const f = await (await call(`${API}/files/${id}?fields=version,modifiedTime`)).json();
+    return { rev: String(f.version), updated: Date.parse(f.modifiedTime) || 0 };
+  }
+
   return {
     kind: 'drive',
     label: `Google Drive: /${normalize(rootPath)}`,
@@ -268,8 +274,8 @@ async function driveStorage(clientId, rootPath = 'taski', { fullAccess = false, 
     async read(path) {
       const f = await resolve(path);
       if (f.kind !== 'file') throw new NotFoundError(path);
-      const [res, rev] = await Promise.all([call(`${API}/files/${f.id}?alt=media`), version(f.id)]);
-      return { text: await res.text(), rev };
+      const [res, { rev, updated }] = await Promise.all([call(`${API}/files/${f.id}?alt=media`), meta(f.id)]);
+      return { text: await res.text(), rev, updated };
     },
     async write(path, text, opts = {}) {
       const p = normalize(path);

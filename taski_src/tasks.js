@@ -101,6 +101,7 @@ function statusKind(wf, status) {
  * @property {string} slug        Folder or file name without `.md`.
  * @property {string} text
  * @property {string} rev
+ * @property {number} updated     When the file last changed, ms since the epoch; 0 when unknown.
  * @property {Map<string, string>} fields
  * @property {string} title
  * @property {string} status
@@ -140,9 +141,10 @@ function statusKind(wf, status) {
  * @param {string} path
  * @param {string} text
  * @param {string} rev
+ * @param {number} [updated]
  * @returns {Task}
  */
-function parseTask(path, text, rev) {
+function parseTask(path, text, rev, updated = 0) {
   const fm = parseFrontmatter(text);
   const name = basename(path);
   const slug = /^readme\.md$/i.test(name) ? basename(dirname(path)) : name.replace(/\.md$/i, '');
@@ -152,6 +154,7 @@ function parseTask(path, text, rev) {
     slug,
     text,
     rev,
+    updated,
     fields: fm.fields,
     title: getTitle(fm.body) || slug,
     status: fm.fields.get('status') || 'todo',
@@ -173,8 +176,8 @@ function parseTask(path, text, rev) {
  * @param {string} path
  */
 async function loadTask(storage, path) {
-  const { text, rev } = await storage.read(path);
-  return parseTask(path, text, rev);
+  const { text, rev, updated } = await storage.read(path);
+  return parseTask(path, text, rev, updated || 0);
 }
 
 /** Frontmatter field of each relation. */
@@ -235,7 +238,7 @@ function isBlocked(task) {
  */
 async function saveTask(storage, task, text) {
   const { rev } = await storage.write(task.path, text, { rev: task.rev });
-  return parseTask(task.path, text, rev);
+  return parseTask(task.path, text, rev, Date.now());
 }
 
 /**
@@ -315,17 +318,23 @@ async function exists(storage, path) {
  * Create a task and link it from the project README's `## Tasks` section.
  * @param {import('./storage/storage.js').Storage} storage
  * @param {import('./projects.js').Project} project
- * @param {{title: string, singleFile?: boolean}} input
+ * @param {{title: string, singleFile?: boolean, status?: string, priority?: string, due?: string, estimate?: string, milestone?: string, tags?: string[], description?: string}} input
  * @returns {Promise<Task>}
  */
-async function createTask(storage, project, { title, singleFile = false }) {
-  const status = (project.workflow || DEFAULT_WORKFLOW).initial;
+async function createTask(storage, project, { title, singleFile = false, status = '', priority = 'normal', due = '', estimate = '', milestone = '', tags = [], description = '' }) {
+  status = status || (project.workflow || DEFAULT_WORKFLOW).initial;
   const base = slugify(title);
   let slug = base;
   const pathFor = (/** @type {string} */ s) => (singleFile ? join(project.path, 'tasks', `${s}.md`) : join(project.path, 'tasks', s, 'README.md'));
   for (let n = 2; await exists(storage, pathFor(slug)); n++) slug = `${base}-${n}`;
   const path = pathFor(slug);
-  const text = ['---', 'type: task', `status: ${status}`, 'priority: normal', `created: ${today()}`, '---', '', `# ${title}`, '', ''].join('\n');
+  const front = ['type: task', `status: ${status}`, `priority: ${priority || 'normal'}`];
+  if (due) front.push(`due: ${due}`);
+  front.push(`created: ${today()}`);
+  if (estimate) front.push(`estimate: ${estimate}`);
+  if (tags.length) front.push(`tags: ${tags.join(', ')}`);
+  if (milestone) front.push(`milestone: ${milestone}`);
+  const text = ['---', ...front, '---', '', `# ${title}`, '', ...(description.trim() ? [description.trim(), ''] : []), ''].join('\n');
   // Always: a single-file task still needs tasks/, which a new project lacks.
   await storage.mkdir(dirname(path));
   const { rev } = await storage.write(path, text, { create: true });
@@ -338,7 +347,7 @@ async function createTask(storage, project, { title, singleFile = false }) {
     const fresh = ['---', 'type: project', 'status: active', '---', '', `# ${project.title}`, '', '## Tasks', '', link, ''].join('\n');
     await storage.write(readme, fresh, { create: true });
   }
-  return parseTask(path, text, rev);
+  return parseTask(path, text, rev, Date.now());
 }
 
 Taski.tasks = {

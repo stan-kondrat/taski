@@ -36,7 +36,8 @@ function pythonStorage(apiBase = new URL('api/', location.href).href) {
     },
     async read(path) {
       const res = await check(await fetch(api('files', path), { cache: 'no-store' }), path);
-      return { text: await res.text(), rev: res.headers.get('ETag') || '' };
+      const modified = Date.parse(res.headers.get('Last-Modified') || '');
+      return { text: await res.text(), rev: res.headers.get('ETag') || '', updated: Number.isNaN(modified) ? 0 : modified };
     },
     async write(path, text, opts = {}) {
       /** @type {Record<string, string>} */

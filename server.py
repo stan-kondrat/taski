@@ -55,6 +55,7 @@ import argparse
 import base64
 import collections
 import datetime
+import email.utils
 import hashlib
 import hmac
 import ipaddress
@@ -566,7 +567,12 @@ class Handler(SimpleHTTPRequestHandler):
 
     def api_get_files(self, query):
         data, rev = self.workspace.read(query.get("path"))
-        self.send(HTTPStatus.OK, data, "text/markdown; charset=utf-8", {"ETag": rev})
+        headers = {"ETag": rev}
+        try:  # the revision is "<mtime_ns>-<size>": tell clients when the file last changed
+            headers["Last-Modified"] = email.utils.formatdate(int(rev.strip('"').split("-")[0]) / 1e9, usegmt=True)
+        except ValueError:
+            pass
+        self.send(HTTPStatus.OK, data, "text/markdown; charset=utf-8", headers)
 
     def api_put_files(self, query):
         # resolve and validate the path before reading a body of any size

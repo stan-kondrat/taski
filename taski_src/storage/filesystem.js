@@ -68,7 +68,7 @@ function filesystemStorage(root) {
     },
     async read(path) {
       const f = await (await file(path)).getFile();
-      return { text: await f.text(), rev: revOf(f) };
+      return { text: await f.text(), rev: revOf(f), updated: f.lastModified };
     },
     async write(path, text, opts = {}) {
       let handle;

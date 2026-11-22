@@ -15,6 +15,7 @@
  * @typedef {Object} FileData
  * @property {string} text
  * @property {string} rev    Opaque revision token; '' when the adapter cannot tell.
+ * @property {number} [updated]  When the file last changed, in ms since the epoch, if the adapter knows.
  */
 
 /**

@@ -15,7 +15,7 @@ const { scopedStorage } = Taski.scoped;
 const { supported: pickedSupported, pickedStorage, chooseFolderFiles } = Taski.picked;
 const { ConflictError } = Taski.storage;
 const { createTask, linkRelations, loadTask, saveTask, setTaskCheck, setTaskField } = Taski.tasks;
-const { h } = Taski.dom;
+const { h, applyFolds, toggleFold } = Taski.dom;
 const { fileHref, fileView, isOpen, overviewView, projectHref, projectView, taskHref, taskView } = Taski.views;
 
 const main = /** @type {HTMLElement} */ (document.getElementById('main'));
@@ -469,7 +469,7 @@ async function refresh() {
  */
 function renderSidebar() {
   if (!workspace) return;
-  const here = decodeURIComponent(location.hash);
+  const here = decodeURIComponent(location.hash).split('?')[0];
   const c = ctx();
   const projectItem = (/** @type {import('./projects.js').Project} */ p) => {
     const open = p.tasks.filter((t) => isOpen(t, p)).length;
@@ -535,9 +535,9 @@ function ctx() {
         showError(e);
       }
     },
-    createTask: async (project, title, singleFile) => {
+    createTask: async (project, title, singleFile, extra = {}) => {
       try {
-        const task = await createTask(/** @type {any} */ (storage), project, { title, singleFile });
+        const task = await createTask(/** @type {any} */ (storage), project, { title, singleFile, ...extra });
         await refreshData();
         location.hash = taskHref(task.path);
       } catch (e) {
@@ -655,8 +655,9 @@ function setEditing(on) {
 
 async function route() {
   if (!storage || !workspace) return;
-  const hash = location.hash.replace(/^#\/?/, '');
-  const [kind, ...rest] = hash.split('/');
+  const [hashPath, hashQuery = ''] = location.hash.replace(/^#\/?/, '').split('?');
+  const [kind, ...rest] = hashPath.split('/');
+  const tab = new URLSearchParams(hashQuery).get('tab') || '';
   let path = '';
   try {
     path = normalize(rest.map(decodeURIComponent).join('/'));
@@ -665,14 +666,16 @@ async function route() {
     return;
   }
   const c = ctx();
-  const editUi = { editing, setEditing };
+  const editUi = { editing, setEditing, tab };
   /** @type {HTMLElement} */
   let view;
 
   if (kind === 'p') {
     const project = workspace.projects.find((p) => p.path === path);
     if (!project) return notFound(path);
-    view = projectView(c, project, uiFor(path));
+    const ui = uiFor(path);
+    ui.tab = tab === 'files' || tab === 'settings' || tab === 'about' ? tab : 'tasks';
+    view = projectView(c, project, ui);
     document.title = `${project.title} · Taski`;
   } else if (kind === 't') {
     const project = workspace.projects.find((p) => p.tasks.some((t) => t.path === path));
@@ -722,6 +725,8 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && storage && !editing) refresh();
 });
 
+applyFolds();
+document.getElementById('fold-left')?.addEventListener('click', () => toggleFold('left'));
 document.getElementById('refresh')?.addEventListener('click', () => refresh().then(() => notify('Refreshed')));
 document.getElementById('grant')?.addEventListener('click', async () => {
   if (!storage?.grantAccess) return;

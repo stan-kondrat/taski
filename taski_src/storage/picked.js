@@ -58,7 +58,7 @@ function pickedStorage(fileList) {
       const file = files.get(normalize(path));
       if (!file) throw new NotFoundError(path);
       try {
-        return { text: await file.text(), rev: revOf(file) };
+        return { text: await file.text(), rev: revOf(file), updated: file.lastModified };
       } catch {
         // Browsers refuse to read a picked file that changed on disk afterwards.
         throw new Error(`${path} changed on disk since the folder was picked. Choose the folder again to reload it.`);

@@ -426,7 +426,11 @@ button.milestone:hover { border-color: var(--accent); }
 .sidebar details.archived { margin-top: 12px; }
 .sidebar details.archived summary { cursor: pointer; padding: 5px 10px; color: var(--muted); font-size: 13px; display: flex; gap: 8px; }
 .sidebar details.archived a { color: var(--muted); }
-.view h1 .archive { margin-left: auto; font-weight: 400; }
+.view h1 .head-actions { margin-left: auto; display: inline-flex; gap: 8px; font-weight: 400; }
+.view h1 .head-actions .button { text-decoration: none; padding: 3px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; color: inherit; }
+.view h1 .head-actions .button.on { background: var(--accent-soft); color: var(--accent); }
+.project-tabs { margin: 8px 0 12px; }
+.project-tabs .tab { padding: 4px 14px; text-decoration: none; color: inherit; }
 .archived-note { margin: -8px 0 12px; padding: 6px 12px; border-left: 3px solid var(--muted); color: var(--muted); font-size: 14px; }
 details.archived-projects { margin-top: 28px; }
 details.archived-projects .project-cards { margin-top: 10px; }
@@ -434,3 +438,88 @@ details.archived-projects .project-cards { margin-top: 10px; }
 @media (max-width: 720px) {
   .sidebar ul.milestones { display: none; }
 }
+
+dialog.modal { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--text); padding: 16px 20px; min-width: min(420px, 90vw); }
+dialog.modal::backdrop { background: rgba(0, 0, 0, .4); }
+dialog.modal h2 { margin: 0 0 10px; font-size: 16px; }
+dialog.modal .close { margin-top: 10px; }
+dialog.modal form.new-task { display: flex; flex-direction: column; gap: 10px; }
+dialog.modal form.new-task .actions { display: flex; justify-content: flex-end; gap: 8px; }
+dialog.modal form.new-task { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
+dialog.modal form.new-task h2, dialog.modal form.new-task .wide, dialog.modal form.new-task .inline, dialog.modal form.new-task .actions { grid-column: 1 / -1; }
+dialog.modal form.new-task label { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--muted); }
+dialog.modal form.new-task label.inline { flex-direction: row; align-items: center; gap: 6px; }
+dialog.modal { min-width: min(560px, 92vw); }
+
+.tasks-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 20px; align-items: start; }
+.filters { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+.filters h3, .filters h4 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.filters h4 { margin-top: 6px; }
+.filters .search { width: 100%; box-sizing: border-box; }
+.filters .tabs { align-self: flex-start; }
+.filters .milestone-bar, .filters .label-bar { display: flex; flex-wrap: wrap; gap: 6px; }
+.filters .milestone-bar { flex-direction: column; flex-wrap: nowrap; }
+@media (max-width: 800px) { .tasks-layout { grid-template-columns: 1fr; } .filters { position: static; } }
+.filters h4:has(+ :empty) { display: none; }
+.filters .milestone-bar, .filters .label-bar { margin: 0; }
+.view h1 .project-tabs { margin: 0 0 0 16px; font-size: 14px; font-weight: 400; }
+
+.active-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.active-filters:empty { display: none; }
+.filter-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px 2px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 13px; }
+.filter-chip .kind { opacity: .7; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.filter-chip button { border: 0; background: transparent; color: inherit; cursor: pointer; padding: 0 6px; font-size: 16px; line-height: 1; border-radius: 999px; }
+.filter-chip button:hover { background: rgba(0, 0, 0, .1); }
+
+/* ---- foldable sidebars ---- */
+.fold-btn { margin-right: 8px; }
+body.fold-left .sidebar { display: none; }
+body.fold-right .tasks-layout { grid-template-columns: minmax(0, 1fr); }
+body.fold-right .filters { display: none; }
+.toolbar .fold-right { margin-left: auto; }
+
+/* ---- dependency graph ---- */
+.graph-scroll { overflow: auto; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.graph-svg { display: block; }
+.graph-svg .edge { fill: none; stroke: var(--muted); stroke-width: 1.4; opacity: .55; }
+.graph-svg .edge.open { stroke: var(--accent); opacity: .85; }
+.graph-svg marker path { fill: var(--muted); }
+.graph-svg .node rect { fill: var(--bg, var(--panel)); stroke: var(--line); stroke-width: 1.2; }
+.graph-svg .node:hover rect { stroke: var(--accent); }
+.graph-svg .node.k-active rect { stroke: var(--accent); }
+.graph-svg .node.k-closed rect { opacity: .6; }
+.graph-svg .node.blocked rect { stroke-dasharray: 4 3; }
+.graph-svg .node.high rect { stroke-width: 2; }
+.graph-svg .node text.t { fill: var(--text); font-size: 13px; }
+.graph-svg .node text.s { fill: var(--muted); font-size: 11px; }
+.graph-svg .node { text-decoration: none; }
+
+.filters .search { flex: none; height: auto; }
+.filters .filters-head { display: flex; align-items: center; justify-content: space-between; }
+button.icon { display: inline-flex; align-items: center; justify-content: center; padding: 4px 7px; line-height: 0; }
+body:not(.fold-right) .toolbar .fold-right { display: none; }
+
+.status-bar { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+.status-opt { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: inherit; font-size: 13px; cursor: pointer; }
+.status-opt .count { color: var(--muted); font-size: 11px; }
+.status-opt:hover { border-color: var(--accent); }
+.status-opt.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-weight: 600; }
+
+.view h1 .fold-right { margin-left: auto; align-self: center; }
+body:not(.fold-right) .view h1 .fold-right { display: none; }
+.task-side .meta { display: flex; flex-direction: column; align-items: stretch; gap: 10px; margin: 0; }
+.task-side .meta label, .task-side .meta .field { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--muted); }
+.task-side .meta select, .task-side .meta input { width: 100%; box-sizing: border-box; color: var(--text); }
+.task-side .panel { margin: 0; }
+.task-side .meta { border: 0; padding: 0; background: transparent; }
+.task-side .meta .field, .task-side .meta label.grow { flex: none; }
+
+.relations h2.with-action { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.relations h2.with-action button { font-weight: 400; }
+
+.toolbar select.sort { font-size: 13px; }
+.task-row .stamp { white-space: nowrap; }
+
+.status-pill { font-size: 12px; padding: 2px 10px; border: 1px solid var(--line); border-radius: 99px; font-weight: 600; white-space: nowrap; }
+.with-sort { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.with-sort select { font-size: 13px; font-weight: 400; }

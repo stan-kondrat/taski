@@ -32,7 +32,8 @@ function httpStorage(baseUrl) {
       if (res.status === 404) throw new NotFoundError(path);
       if (!res.ok) throw new Error(`HTTP ${res.status} reading ${path}`);
       const rev = res.headers.get('ETag') || res.headers.get('Last-Modified') || '';
-      return { text: await res.text(), rev };
+      const modified = Date.parse(res.headers.get('Last-Modified') || '');
+      return { text: await res.text(), rev, updated: Number.isNaN(modified) ? 0 : modified };
     },
     async write() {
       throw new ReadOnlyError();

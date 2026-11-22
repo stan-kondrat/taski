@@ -76,6 +76,7 @@ class ServerTest(unittest.TestCase):
 
         status, body, headers = self.request("GET", path)
         self.assertEqual((status, body, headers["ETag"]), (200, "one", rev))
+        self.assertTrue(headers["Last-Modified"].endswith(" GMT"))
 
         status, _, headers = self.request("PUT", path, "two!", {"If-Match": rev})
         self.assertEqual(status, 200)

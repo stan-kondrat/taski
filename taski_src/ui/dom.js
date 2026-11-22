@@ -51,5 +51,33 @@ function select(value, options, attrs = {}) {
   return h('select', attrs, all.map((o) => h('option', { value: o, selected: o === value }, o)));
 }
 
-Taski.dom = { h, select };
+const FOLD_KEY = 'taski.folded';
+/** Names of the sidebars folded away ('left', 'right'), remembered in this browser. @returns {string[]} */
+function foldedPanels() {
+  try {
+    return JSON.parse(localStorage.getItem(FOLD_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+/** Apply the remembered folds to the page. */
+function applyFolds() {
+  for (const name of ['left', 'right']) document.body.classList.toggle(`fold-${name}`, foldedPanels().includes(name));
+}
+/**
+ * Fold or unfold a sidebar.
+ * @param {'left' | 'right'} name
+ * @returns {boolean} true when it is now folded
+ */
+function toggleFold(name) {
+  const folded = document.body.classList.toggle(`fold-${name}`);
+  try {
+    localStorage.setItem(FOLD_KEY, JSON.stringify(['left', 'right'].filter((n) => document.body.classList.contains(`fold-${n}`))));
+  } catch {
+    // private mode: not remembered
+  }
+  return folded;
+}
+
+Taski.dom = { h, select, applyFolds, toggleFold };
 })(window.Taski = window.Taski || {});
