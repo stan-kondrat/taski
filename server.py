@@ -230,11 +230,17 @@ class Workspace:
                 continue
             if self.projects is not None and full == self.root and entry.is_dir() and entry.name not in self.projects:
                 continue
-            entries.append({
+            item = {
                 "name": entry.name,
                 "path": (rel + "/" if rel else "") + entry.name,
                 "kind": "dir" if entry.is_dir() else "file",
-            })
+            }
+            if item["kind"] == "file":
+                try:  # when the file last changed, in ms: lets the UI sort by recent changes
+                    item["updated"] = entry.stat().st_mtime_ns // 1000000
+                except OSError:
+                    pass
+            entries.append(item)
         return entries
 
     def details(self, rel, recursive=False, since_ns=None, want_hash=False, limit=MAX_LIST_ENTRIES):

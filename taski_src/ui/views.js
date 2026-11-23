@@ -1011,30 +1011,194 @@ function relationsPanel(ctx, task, project) {
 
 const KIND_ICON = { markdown: '📝', text: '📄', image: '🖼️', pdf: '📕', link: '🔗', other: '📦' };
 
+const FILES_MODE_KEY = 'taski.filesMode';
+/** How the file list is laid out: folders as a tree, newest first, or A–Z. */
+const FILE_MODES = [['tree', 'Folders'], ['recent', 'Recent'], ['name', 'A–Z']];
+
 /**
- * Attached documents of a task or project, with inline previews.
+ * “3d ago” for recent changes, the date for old ones, '' when unknown.
+ * @param {number | undefined} ms
+ */
+function ago(ms) {
+  if (!ms) return '';
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 86400 * 30) return `${Math.floor(s / 86400)}d ago`;
+  return new Date(ms).toLocaleDateString([], { dateStyle: 'medium' });
+}
+
+/**
+ * Attached documents of a task or project: a list on the left, the selected
+ * file shown in full on the right.
  * @param {ViewContext} ctx
  * @param {import('../files.js').Owner} owner
  * @param {string} heading
  * @param {boolean} [withActions]  Show the new-note and attach forms under the list.
  */
 function filesPanel(ctx, owner, heading, withActions = true) {
-  const list = h('ul.files', null, h('li.muted', null, 'Loading…'));
+  const body = h('div.files-browser', null, h('p.muted', null, 'Loading…'));
   const count = h('span.count');
   const canWrite = ctx.storage.canWrite;
 
   listAttachments(ctx.storage, owner).then((items) => {
     count.textContent = items.length ? String(items.length) : '';
-    list.replaceChildren(...items.map((a) => fileItem(ctx, owner, a)));
-    if (!items.length) list.append(h('li.muted', null, canWrite ? 'No files yet. Add a note or attach a file or link.' : 'No files.'));
+    body.replaceChildren(items.length
+      ? filesBrowser(ctx, owner, items)
+      : h('p.muted', null, canWrite ? 'No files yet. Add a note or attach a file or link.' : 'No files.'));
   }, (e) => {
-    list.replaceChildren(h('li.muted', null, `Could not list files: ${e.message}`));
+    body.replaceChildren(h('p.muted', null, `Could not list files: ${e.message}`));
   });
 
   return h('section.panel.files-panel', null,
     h('h2', null, heading, count),
-    list,
+    body,
     canWrite && withActions ? fileActions(ctx, owner) : null);
+}
+
+/**
+ * @param {ViewContext} ctx
+ * @param {import('../files.js').Owner} owner
+ * @param {import('../files.js').Attachment[]} items
+ */
+function filesBrowser(ctx, owner, items) {
+  let mode = 'tree';
+  try {
+    const saved = localStorage.getItem(FILES_MODE_KEY);
+    if (FILE_MODES.some(([id]) => id === saved)) mode = /** @type {string} */ (saved);
+  } catch {
+    // storage blocked: default layout
+  }
+  let query = '';
+  /** @type {import('../files.js').Attachment | null} */
+  let selected = null;
+  let raw = false;
+  const folded = new Set();
+  /** @type {Map<string, string>} */
+  const texts = new Map();
+
+  const dirOf = (/** @type {import('../files.js').Attachment} */ a) => (a.path === null ? '' : dirname(relativeTo(owner.file, a.path)));
+  const byName = (/** @type {import('../files.js').Attachment} */ a, /** @type {import('../files.js').Attachment} */ b) => a.name.localeCompare(b.name);
+  const byNewest = (/** @type {import('../files.js').Attachment} */ a, /** @type {import('../files.js').Attachment} */ b) => (b.updated || 0) - (a.updated || 0) || byName(a, b);
+  const visible = () => items.filter((a) => !query || `${a.name} ${a.path || a.href}`.toLowerCase().includes(query));
+
+  const modes = h('div.tabs', { role: 'group', 'aria-label': 'Order files' });
+  const list = h('div.file-list');
+  const viewer = h('div.file-viewer');
+  const search = h('input.search', {
+    type: 'search', placeholder: 'Filter files…', 'aria-label': 'Filter files',
+    oninput: (/** @type {Event} */ e) => { query = /** @type {HTMLInputElement} */ (e.target).value.trim().toLowerCase(); renderList(); },
+  });
+
+  /** @param {import('../files.js').Attachment} a */
+  function row(a) {
+    const flat = mode !== 'tree';
+    const sub = flat && dirOf(a) ? h('span.dir', null, dirOf(a)) : null;
+    const inner = [
+      h('span.icon', { 'aria-hidden': 'true' }, KIND_ICON[a.kind]),
+      h('span.text', null, h('span.name', null, a.name), sub),
+      a.linked ? null : h('span.tag', { title: 'In the folder but not listed under ## Files' }, 'not linked'),
+      h('span.when', { title: a.updated ? new Date(a.updated).toLocaleString() : '' }, ago(a.updated)),
+    ];
+    if (a.path === null) return h('a.file-row', { href: a.href, target: '_blank', rel: 'noopener noreferrer', title: a.href }, inner);
+    const path = a.path;
+    if (!canPreview(a.kind)) return h('a.file-row', { href: fileHref(path), title: path }, inner);
+    return h(`button.file-row${selected === a ? '.sel' : ''}`, { type: 'button', title: path, 'aria-pressed': selected === a ? 'true' : 'false', onclick: () => select(a) }, inner);
+  }
+
+  /** @param {{files: import('../files.js').Attachment[], dirs: Map<string, any>}} node @param {string} base */
+  function treeNodes(node, base) {
+    const out = [];
+    for (const [name, child] of [...node.dirs].sort((x, y) => x[0].localeCompare(y[0]))) {
+      const key = base ? `${base}/${name}` : name;
+      const open = !!query || !folded.has(key);
+      const total = (/** @type {any} */ n) => n.files.length + [...n.dirs.values()].reduce((s, c) => s + total(c), 0);
+      out.push(h('div.folder', null,
+        h('button.folder-row', {
+          type: 'button', 'aria-expanded': open ? 'true' : 'false',
+          onclick: () => { if (folded.has(key)) folded.delete(key); else folded.add(key); renderList(); },
+        }, h('span.caret', { 'aria-hidden': 'true' }, open ? '▾' : '▸'), h('span.name', null, name), h('span.when', null, String(total(child)))),
+        open ? h('div.children', null, treeNodes(child, key)) : null));
+    }
+    for (const a of node.files.sort(byName)) out.push(row(a));
+    return out;
+  }
+
+  function renderList() {
+    modes.replaceChildren(...FILE_MODES.map(([id, label]) =>
+      h(`button.tab${mode === id ? '.on' : ''}`, {
+        type: 'button', 'aria-pressed': mode === id ? 'true' : 'false',
+        onclick: () => {
+          mode = id;
+          try { localStorage.setItem(FILES_MODE_KEY, id); } catch { /* not remembered */ }
+          renderList();
+        },
+      }, label)));
+    const shown = visible();
+    if (!shown.length) return list.replaceChildren(h('p.muted.empty', null, 'No files match.'));
+    if (mode !== 'tree') return list.replaceChildren(...shown.sort(mode === 'recent' ? byNewest : byName).map(row));
+    const links = shown.filter((a) => a.path === null);
+    const root = { files: /** @type {import('../files.js').Attachment[]} */ ([]), dirs: /** @type {Map<string, any>} */ (new Map()) };
+    for (const a of shown) {
+      if (a.path === null) continue;
+      let node = root;
+      for (const part of dirOf(a).split('/').filter(Boolean)) {
+        if (!node.dirs.has(part)) node.dirs.set(part, { files: [], dirs: new Map() });
+        node = node.dirs.get(part);
+      }
+      node.files.push(a);
+    }
+    list.replaceChildren(
+      ...(links.length ? [h('div.group-title', null, 'Links'), ...links.sort(byName).map(row), h('div.group-title', null, 'Files')] : []),
+      ...treeNodes(root, ''));
+  }
+
+  /** @param {import('../files.js').Attachment} a */
+  function select(a) {
+    selected = a;
+    raw = false;
+    renderList();
+    renderViewer();
+  }
+
+  async function renderViewer() {
+    const a = selected;
+    if (!a || a.path === null) return viewer.replaceChildren(h('p.muted.empty', null, 'Pick a file on the left to read it here.'));
+    const path = a.path;
+    const body = h('div.file-body', null, h('p.muted', null, 'Loading…'));
+    const rawBtn = a.kind === 'markdown'
+      ? h('button.small', { type: 'button', title: 'Switch between rendered text and the file as written', onclick: () => { raw = !raw; show(); rawBtn.textContent = raw ? 'Rendered' : 'Raw'; } }, raw ? 'Rendered' : 'Raw')
+      : null;
+    const linkBtn = !a.linked && ctx.storage.canWrite
+      ? h('button.small', { type: 'button', title: `Add to ## Files in ${basename(owner.file)}`, onclick: () => ctx.attachPath(owner, path) }, 'Link')
+      : null;
+    viewer.replaceChildren(
+      h('div.file-head', null,
+        h('div.titles', null, h('strong', null, a.name), h('span.path', null, relativeTo(owner.file, path), a.updated ? ` · updated ${ago(a.updated)}` : '')),
+        h('div.head-actions', null, rawBtn, linkBtn, h('a.open', { href: fileHref(path), title: 'Open on its own page' }, 'Open ↗'))),
+      body);
+    const show = () => {
+      const text = texts.get(path) ?? '';
+      body.replaceChildren(a.kind === 'markdown' && !raw
+        ? h('div.md', { html: renderMarkdown(parseFrontmatter(text).body, { resolveLink: linkResolver(ctx.workspace, path) }) || '<p class="muted">Empty file.</p>' })
+        : h('pre.raw', null, text || 'Empty file.'));
+    };
+    if (texts.has(path)) return show();
+    try {
+      texts.set(path, (await ctx.storage.read(path)).text);
+      if (selected === a) show();
+    } catch (e) {
+      if (selected === a) body.replaceChildren(h('p.muted', null, `Could not read ${path}: ${/** @type {Error} */ (e).message}`));
+    }
+  }
+
+  selected = items.find((a) => a.path !== null && canPreview(a.kind)) || null;
+  renderList();
+  renderViewer();
+  return h('div.files-browser-inner', null,
+    h('div.file-nav', null, h('div.toolbar', null, modes, search), list),
+    viewer);
 }
 
 /**
@@ -1062,60 +1226,6 @@ function fileActions(ctx, owner) {
     attachForm,
     h('p.hint', null, 'Links live in the ', h('code', null, '## Files'), ' section of ',
       h('code', null, basename(owner.file)), '. Notes are created next to it.'));
-}
-
-/**
- * @param {ViewContext} ctx
- * @param {import('../files.js').Owner} owner
- * @param {import('../files.js').Attachment} a
- */
-function fileItem(ctx, owner, a) {
-  const where = a.path === null ? hostOf(a.href) : relativeTo(owner.file, a.path);
-  const linkBtn = !a.linked && ctx.storage.canWrite
-    ? h('button.small', { type: 'button', title: `Add to ## Files in ${basename(owner.file)}`, onclick: () => ctx.attachPath(owner, /** @type {string} */ (a.path)) }, 'Link')
-    : null;
-  const badge = a.linked ? null : h('span.tag', { title: 'In the folder but not listed under ## Files' }, 'not linked');
-  const icon = h('span.icon', { 'aria-hidden': 'true' }, KIND_ICON[a.kind]);
-
-  if (a.path === null) {
-    return h('li.file', null, h('div.row', null, icon,
-      h('a.name', { href: a.href, target: '_blank', rel: 'noopener noreferrer' }, a.name), h('span.where', null, where)));
-  }
-  const path = a.path;
-  if (!canPreview(a.kind)) {
-    return h('li.file', null, h('div.row', null, icon, h('a.name', { href: fileHref(path) }, a.name), h('span.where', null, where), badge, linkBtn));
-  }
-  const preview = h('div.preview');
-  let loaded = false;
-  const details = h('details', {
-    ontoggle: async () => {
-      if (!(/** @type {HTMLDetailsElement} */ (details)).open || loaded) return;
-      loaded = true;
-      preview.replaceChildren(h('p.muted', null, 'Loading…'));
-      try {
-        const { text } = await ctx.storage.read(path);
-        preview.replaceChildren(a.kind === 'markdown'
-          ? h('div.md', { html: renderMarkdown(parseFrontmatter(text).body, { resolveLink: linkResolver(ctx.workspace, path) }) || '<p class="muted">Empty file.</p>' })
-          : h('pre.raw', null, text));
-      } catch (e) {
-        loaded = false;
-        preview.replaceChildren(h('p.muted', null, `Could not read ${path}: ${/** @type {Error} */ (e).message}`));
-      }
-    },
-  },
-  h('summary', null, icon, h('span.name', null, a.name), h('span.where', null, where), badge,
-    h('a.open', { href: fileHref(path), title: 'Open full page', onclick: (/** @type {Event} */ e) => e.stopPropagation() }, 'Open')),
-  preview);
-  return h('li.file', null, details, linkBtn ? h('div.under', null, linkBtn) : null);
-}
-
-/** @param {string} href */
-function hostOf(href) {
-  try {
-    return new URL(href).host;
-  } catch {
-    return href;
-  }
 }
 
 /**
@@ -1236,16 +1346,27 @@ function fileView(ctx, path, file, ui) {
   }
   const kind = fileKind(path);
   const isMd = kind === 'markdown';
-  return h('section.view', null, crumbs,
-    !file
-      ? h('p.muted', null, `Taski shows Markdown and text files only. Open ${basename(path)} from where your files live.`)
-      : isMd
-        ? h('div.md', { html: renderMarkdown(parseFrontmatter(file.text).body, { resolveLink: linkResolver(ctx.workspace, path) }) })
-        : h('pre.raw', null, file.text),
+  const content = h('div.file-body');
+  let raw = false;
+  const show = () => {
+    if (!file) return content.replaceChildren(h('p.muted', null, `Taski shows Markdown and text files only. Open ${basename(path)} from where your files live.`));
+    content.replaceChildren(isMd && !raw
+      ? h('div.md', { html: renderMarkdown(parseFrontmatter(file.text).body, { resolveLink: linkResolver(ctx.workspace, path) }) || '<p class="muted">Empty file.</p>' })
+      : h('pre.raw', null, file.text || 'Empty file.'));
+  };
+  show();
+  const rawBtn = file && isMd
+    ? h('button.small', { type: 'button', title: 'Switch between rendered text and the file as written', onclick: () => { raw = !raw; rawBtn.textContent = raw ? 'Rendered' : 'Raw'; show(); } }, 'Raw')
+    : null;
+  return h('section.view.file-page', null, crumbs,
+    h('div.file-head', null,
+      h('div.titles', null, h('h1', null, KIND_ICON[kind], ' ', basename(path)), h('span.path', null, path)),
+      h('div.head-actions', null,
+        rawBtn,
+        file && ctx.storage.canWrite && isMd ? h('button.small', { type: 'button', onclick: () => ui.setEditing(true) }, 'Edit Markdown') : null)),
+    content,
     h('div.actions', null,
-      file && ctx.storage.canWrite && isMd ? h('button', { type: 'button', onclick: () => ui.setEditing(true) }, 'Edit Markdown') : null,
-      task ? h('a', { href: taskHref(task.path) }, `← ${task.title}`) : project ? h('a', { href: projectHref(project.path) }, `← ${project.title}`) : null,
-      h('span.path', null, path)));
+      task ? h('a', { href: taskHref(task.path) }, `← ${task.title}`) : project ? h('a', { href: projectHref(project.path) }, `← ${project.title}`) : null));
 }
 
 Taski.views = { encodePath, taskHref, projectHref, fileHref, isOpen, labelHue, overviewView, projectView, taskView, fileView };

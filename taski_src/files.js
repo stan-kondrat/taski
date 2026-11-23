@@ -21,6 +21,7 @@ const { exists } = Taski.tasks;
  * @property {string | null} path   Workspace path, null for external links.
  * @property {boolean} linked       Listed in `## Files`.
  * @property {FileKind} kind
+ * @property {number} [updated]     When the file last changed (ms), where the storage can tell.
  */
 
 /**
@@ -60,7 +61,7 @@ const canPreview = (kind) => kind === 'markdown' || kind === 'text';
  * @param {string} dir
  * @param {Set<string>} skip   Folder names to leave out at the top level.
  * @param {number} depth
- * @returns {Promise<string[]>}
+ * @returns {Promise<{path: string, updated?: number}[]>}
  */
 async function walk(storage, dir, skip, depth) {
   let entries;
@@ -73,7 +74,7 @@ async function walk(storage, dir, skip, depth) {
   const out = [];
   for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     if (e.name.startsWith('.') || e.name.startsWith('_')) continue;
-    if (e.kind === 'file') out.push(e.path);
+    if (e.kind === 'file') out.push({ path: e.path, updated: e.updated });
     else if (depth > 0 && !skip.has(e.name)) out.push(...(await walk(storage, e.path, new Set(), depth - 1)));
   }
   return out;
@@ -96,9 +97,12 @@ async function listAttachments(storage, owner) {
   }));
   if (owner.dir === null || !storage.canList) return out;
   const seen = new Set([owner.file, ...owner.links.map((l) => l.path)].filter(Boolean).map((p) => /** @type {string} */ (p).toLowerCase()));
-  for (const path of await walk(storage, owner.dir, new Set(owner.skip || []), 2)) {
+  const found = await walk(storage, owner.dir, new Set(owner.skip || []), 2);
+  const updated = new Map(found.map((f) => [f.path.toLowerCase(), f.updated]));
+  for (const a of out) if (a.path) a.updated = updated.get(a.path.toLowerCase());
+  for (const { path, updated } of found) {
     if (seen.has(path.toLowerCase())) continue;
-    out.push({ name: basename(path), href: '', path, linked: false, kind: fileKind(path) });
+    out.push({ name: basename(path), href: '', path, linked: false, kind: fileKind(path), updated });
   }
   return out;
 }

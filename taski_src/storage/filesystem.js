@@ -62,7 +62,16 @@ function filesystemStorage(root) {
       // @ts-ignore entries() is not in every lib.dom version
       for await (const [name, handle] of d.entries()) {
         if (name.startsWith('.')) continue;
-        entries.push({ name, path: normalize(`${path}/${name}`), kind: handle.kind === 'directory' ? 'dir' : 'file' });
+        /** @type {import('./storage.js').Entry} */
+        const entry = { name, path: normalize(`${path}/${name}`), kind: handle.kind === 'directory' ? 'dir' : 'file' };
+        if (handle.kind === 'file') {
+          try {
+            entry.updated = (await handle.getFile()).lastModified;
+          } catch {
+            // unreadable file: listed without a date
+          }
+        }
+        entries.push(entry);
       }
       return entries.sort((a, b) => a.name.localeCompare(b.name));
     },

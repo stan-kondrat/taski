@@ -9,6 +9,7 @@
  * @property {string} name
  * @property {string} path   Workspace-relative path.
  * @property {'file' | 'dir'} kind
+ * @property {number} [updated]  Files only: when it last changed, in ms since the epoch, if the adapter knows.
  */
 
 /**
