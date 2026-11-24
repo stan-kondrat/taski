@@ -145,7 +145,7 @@ status:</span> doing
         <li>Needs your own Google OAuth client ID with this address as an allowed origin. See the <a href="https://github.com/stan-kondrat/taski#google-drive-setup">setup guide</a>.</li>
         <li>On your own computer. On a remote server, offline means "no internet needed besides your server".</li>
       </ol>
-      <p class="note"><strong>Link to a workspace:</strong> add <code>?storage=</code> (<code>http</code>, <code>server</code>, <code>folder</code> or <code>drive</code>) and <code>&amp;path=</code>, for example <code>taski.html?storage=server&amp;path=work</code>. <a href="https://github.com/stan-kondrat/taski#url-parameters">All parameters</a>.</p>
+      <p class="note"><strong>Link to a workspace:</strong> add <code>#/?storage=</code> (<code>http</code>, <code>server</code>, <code>folder</code> or <code>drive</code>) and <code>&amp;path=</code>, for example <code>taski.html#/?storage=server&amp;path=work</code>. <a href="https://github.com/stan-kondrat/taski#url-parameters">All parameters</a>.</p>
       <p class="note"><strong>Private server safety:</strong> <code>server.py</code> has no login. It listens only on <code>127.0.0.1</code>, so reach a remote one through an SSH tunnel (<code>ssh -L 8000:127.0.0.1:8000 your-server</code>) or put it behind a reverse proxy with HTTPS and a password.</p>
     </section>
 

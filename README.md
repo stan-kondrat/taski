@@ -162,8 +162,19 @@ stat is unchanged, so repeated full listings read only files that changed.
 
 ## URL parameters
 
-`taski.html` takes the storage type and a path from the query string, so you can bookmark
-or link straight to a workspace:
+Everything goes after the `#`, which browsers never send to the web server. The route
+(`/p/PROJECT`, `/t/TASK`, `/f/FILE`) comes first, then the parameters:
+
+```
+taski.html#/p/jsbedded?storage=server&path=work&project=jsbedded&tab=files
+```
+
+| Parameter | Meaning |
+|---|---|
+| `storage` | `http`, `server`, `folder`, `files` or `drive` (see below) |
+| `path` | depends on `storage`, see below |
+| `project` | show only this project (its folder name). Without it, every project is shown. Opening the workspace goes straight to that project. |
+| `tab` | tab of the open project (`tasks`, `files`, `settings`, `about`) or task (`files`) |
 
 | `storage` | `path` means | Default path | Opens |
 |---|---|---|---|
@@ -176,11 +187,23 @@ or link straight to a workspace:
 Examples:
 
 ```
-taski.html?storage=http&path=https://example.com/notes/taski/
-taski.html?storage=server&path=work
-taski.html?storage=folder&path=projects/2026
-taski.html?storage=drive&path=Work/taski
+taski.html#/?storage=http&path=https://example.com/notes/taski/
+taski.html#/?storage=server&path=work
+taski.html#/p/website?storage=server&project=website
+taski.html#/?storage=folder&path=projects/2026
+taski.html#/?storage=drive&path=Work/taski
 ```
+
+In the sidebar, the small “enter” icon next to a project (shown on hover) sets `project=`; the “exit” icon
+on the focused project removes it.
+
+`project=` only chooses what the page shows. To keep an agent or a browser out of other
+projects, start `server.py` with `--project`. `storage=server` is not available on a page
+opened from disk (`file://`) and `storage=drive` needs a web address; the other storages
+work from disk.
+
+Links with `?storage=…&path=…` in the query, from earlier versions, still open; Taski moves
+them after the `#`. If both are present, the `#` wins.
 
 1. Browsers only open a local folder after a click. If you already allowed the remembered
    folder, Chromium may open it right away.
@@ -193,13 +216,13 @@ or from a website) and shows only the options that work there. The rest are list
 Without parameters, Taski uses `server.py` if that served the page, then a `taski-demo/`
 folder next to `taski.html`, and otherwise shows the start screen.
 
-Taski also writes these parameters into the address bar whenever a workspace opens, so
-reloading or bookmarking the page brings you back to the same storage (the `#/…` part keeps
-the project or task you were on). They hold only the storage type and the `path` you gave:
+Taski also writes these parameters after the `#` whenever a workspace opens and keeps them on
+every link inside the page, so reloading or bookmarking brings you back to the same storage,
+project and task. They hold only the storage type and the `path` you gave:
 never a Drive client ID, and not the name of a folder you picked on this computer.
 
-The query string is part of the page request, so the site hosting `taski.html` can see
-it. For private folder names, use the start screen instead of a link.
+The part after `#` is not part of the page request, so the site hosting `taski.html` does not
+see it. Anyone you send the link to does, so leave out a folder name you want to keep private.
 
 ## Privacy
 

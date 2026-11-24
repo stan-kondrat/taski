@@ -431,6 +431,22 @@ button.milestone:hover { border-color: var(--accent); }
 .milestone-card.on { border-color: var(--accent); background: var(--accent-soft); }
 .next-milestone { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 
+/* ---- sidebar: show only one project ---- */
+.sidebar li.has-focus { position: relative; }
+/* Counts stay at the right edge for projects and milestones alike; the icon sits just left of them,
+   in a fixed column, and the project name leaves room for it. */
+.sidebar li.has-focus > a > span:first-child { margin-right: 26px; }
+.sidebar .focus-btn {
+  position: absolute; right: 34px; top: 3px; width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted);
+  cursor: pointer; opacity: 0;
+}
+.sidebar li > a:hover + .focus-btn, .sidebar .focus-btn:hover, .sidebar .focus-btn:focus-visible, .sidebar .focus-btn.on { opacity: 1; }
+.sidebar .focus-btn:hover { background: var(--accent-soft); color: var(--accent); }
+.sidebar .focus-btn.on { color: var(--accent); }
+@media (hover: none) { .sidebar .focus-btn { opacity: 1; } }
+
 /* ---- sidebar: milestones and archived projects ---- */
 
 .sidebar a.within { color: var(--accent); font-weight: 600; }

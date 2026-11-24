@@ -16,6 +16,7 @@ const { supported: pickedSupported, pickedStorage, chooseFolderFiles } = Taski.p
 const { ConflictError } = Taski.storage;
 const { createTask, linkRelations, loadTask, saveTask, setTaskCheck, setTaskField } = Taski.tasks;
 const { h, applyFolds, toggleFold } = Taski.dom;
+const hashLink = Taski.hashlink;
 const { fileHref, fileView, isOpen, overviewView, projectHref, projectView, taskHref, taskView } = Taski.views;
 
 const main = /** @type {HTMLElement} */ (document.getElementById('main'));
@@ -98,24 +99,31 @@ function showError(e) {
  */
 
 /**
- * Put ?storage=…&path=… in the address bar, so reloading or bookmarking the
- * page reopens the same storage. Other query parameters and the #/route stay.
+ * Put storage=…&path=…&project=… after the #/route, so reloading or bookmarking the
+ * page reopens the same storage. Only the hash is used: it is never sent to the web
+ * server. Older links with ?storage=…&path=… in the query are moved there.
  * @param {Link} link
  */
 function setUrlParams(link) {
+  session = { storage: link.storage, path: link.path || '', project: focusProject };
   const params = new URLSearchParams(location.search);
-  params.delete('storage');
-  params.delete('path');
-  params.set('storage', link.storage);
-  if (link.path) params.set('path', link.path);
-  // URLSearchParams escapes '/' and ':'; both are allowed in a query and easier to read.
-  const query = params.toString().replace(/%2F/gi, '/').replace(/%3A/gi, ':');
+  for (const k of hashLink.SESSION_KEYS) params.delete(k);
+  const query = params.toString();
+  const hash = hashLink.apply(location.hash, session);
   try {
-    history.replaceState(null, '', `${location.pathname}?${query}${location.hash}`);
+    history.replaceState(null, '', `${location.pathname}${query ? `?${query}` : ''}${hash}`);
   } catch {
     // Some browsers refuse to rewrite file:// addresses; the URL just stays as it was.
   }
 }
+
+/**
+ * The open workspace as hash parameters; null until one is connected.
+ * @type {Record<string, string> | null}
+ */
+let session = null;
+/** Show only this project (`project=` in the address); '' shows all. */
+let focusProject = '';
 
 /**
  * @param {import('./storage/storage.js').Storage} s
@@ -131,7 +139,8 @@ async function connect(s, link) {
 }
 
 /**
- * URL parameters, e.g. `taski.html?storage=server&path=work`:
+ * Address parameters, after the #: `taski.html#/?storage=server&path=work&project=app&tab=files`
+ * (`?storage=…` in the query still works):
  *
  *   storage  path
  *   http     workspace URL, absolute or relative to this page (default ./taski-demo/)
@@ -139,6 +148,9 @@ async function connect(s, link) {
  *   folder   folder inside the folder you pick on this computer (default: that folder)
  *   files    same, read-only, for browsers that can't edit folders (Safari, Firefox)
  *   drive    folder in My Drive (default: taski)
+ *
+ *   project  show only this project, e.g. `jsbedded`; without it, all projects
+ *   tab      tab of the open project or task (tasks, files, settings, about)
  *
  * `http` and `server` open right away. `folder`, `files` and `drive` need a click, so the
  * start screen opens with that choice first and the path filled in; a folder
@@ -156,20 +168,24 @@ const STORAGE_PARAM = /** @type {Record<string, 'http' | 'python' | 'filesystem'
  * @typedef {Object} StartRequest
  * @property {'http' | 'python' | 'filesystem' | 'picked' | 'drive' | null} kind
  * @property {string} path
+ * @property {string} project
  */
 
-/** @returns {StartRequest} */
+/** @returns {StartRequest} The hash wins over the query. */
 function startRequest() {
-  const params = new URLSearchParams(location.search);
-  const name = (params.get('storage') || '').trim().toLowerCase();
+  const fromHash = hashLink.parse(location.hash).params;
+  const fromQuery = new URLSearchParams(location.search);
+  const get = (/** @type {string} */ key) => (fromHash.get(key) ?? fromQuery.get(key) ?? '').trim();
+  const name = get('storage').toLowerCase();
   const kind = STORAGE_PARAM[name] || null;
   if (name && !kind) notify(`Unknown storage “${name}”. Use http, server, folder, files or drive.`, 'error');
-  return { kind, path: (params.get('path') || '').trim() };
+  return { kind, path: get('path'), project: get('project') };
 }
 
 /** Choose storage without user input where possible; otherwise show the picker. */
 async function start() {
   const want = startRequest();
+  focusProject = want.project;
   try {
     if (want.kind === 'http') return await connect(httpStorage(want.path || LOCAL_WORKSPACE), { storage: 'http', path: want.path });
     if (want.kind === 'python') {
@@ -224,7 +240,7 @@ const serverHowto = () => ['run ', h('code', null, 'python3 server.py'), ' in th
 const staticHowto = () => ['serve the Taski folder with any static web server, for example ', h('code', null, 'python3 -m http.server 8000'), ', and open ', h('code', null, 'http://localhost:8000/taski.html')];
 
 /** @param {StartRequest} [want]  Choice and path from the URL, if any. */
-async function showPicker(want = { kind: null, path: '' }) {
+async function showPicker(want = { kind: null, path: '', project: '' }) {
   document.body.classList.remove('connected', 'can-grant');
   sourceLabel.textContent = '';
   sidebar.replaceChildren();
@@ -456,12 +472,62 @@ async function refresh() {
     showError(e);
     return;
   }
+  allProjects = workspace.projects;
+  applyFocus();
   if (storage.grantAccess && (workspace.warnings.length || workspace.projects.some((p) => p.warnings.length))) {
     workspace.warnings.unshift('Google Drive shows Taski only the files it created and the ones you added. Use “Add from Drive” to add existing files and folders, including the folders they are in.');
   }
   renderSidebar();
   await route();
 }
+
+/** Every project of the loaded workspace, before `project=` narrows the list. @type {import('./projects.js').Project[]} */
+let allProjects = [];
+
+/** Show only `focusProject` (or all projects when it is empty). */
+function applyFocus() {
+  if (!workspace) return;
+  workspace.projects = focusProject ? allProjects.filter((p) => p.path === focusProject) : allProjects;
+  if (!focusProject) return;
+  if (!workspace.projects.length) {
+    workspace.warnings.unshift(`Project “${focusProject}” was not found, so nothing is shown. Remove project= from the address to see all projects.`);
+    return;
+  }
+  // Nothing but the project: skip the overview.
+  if (['', '/'].includes(hashLink.parse(location.hash).route)) {
+    const target = hashLink.apply(projectHref(focusProject), session || {});
+    try {
+      history.replaceState(null, '', location.pathname + location.search + target);
+    } catch {
+      location.hash = target;
+    }
+  }
+}
+
+/**
+ * Enter a project (show only it) or leave again (show all). Updates `project=` in the address.
+ * @param {string} path  Project to show alone; '' shows every project.
+ */
+function setFocus(path) {
+  focusProject = path;
+  if (session) session.project = path;
+  applyFocus();
+  const target = path ? projectHref(path) : '';
+  if (target && hashLink.strip(location.hash) !== target) {
+    location.hash = target; // hashchange adds the session, then draws
+    return;
+  }
+  try {
+    history.replaceState(null, '', location.pathname + location.search + hashLink.apply(location.hash, session || {}));
+  } catch {
+    // file:// in some browsers: the address stays as it was.
+  }
+  renderSidebar();
+  route();
+}
+
+const ICON_ENTER = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3h2a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-2M7 5l3 3-3 3M10 8H3"/></svg>';
+const ICON_EXIT = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3H4a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h2M10 5l3 3-3 3M13 8H6"/></svg>';
 
 /**
  * Projects with their milestones as a second level; archived projects are
@@ -485,12 +551,23 @@ function renderSidebar() {
         onclick: (/** @type {Event} */ e) => { e.preventDefault(); c.showMilestone(p, m.name); },
       }, h('span', null, m.name), left ? h('span.count', null, left) : null));
     });
-    return h('li', null,
+    const focused = focusProject === p.path;
+    // Nothing to narrow down when there is only one project, unless it is already narrowed.
+    const canFocus = focused || allProjects.length > 1;
+    const focusBtn = canFocus ? h('button.focus-btn', {
+      type: 'button', class: focused ? 'on' : '', html: focused ? ICON_EXIT : ICON_ENTER,
+      title: focused ? 'Show all projects' : `Show only ${p.title}`,
+      'aria-label': focused ? 'Show all projects' : `Show only ${p.title}`,
+      'aria-pressed': focused ? 'true' : 'false',
+      onclick: () => setFocus(focused ? '' : p.path),
+    }) : null;
+    return h(`li${canFocus ? '.has-focus' : ''}`, null,
       h('a', {
         href: projectHref(p.path), class: on && !(atProject && picked) ? 'on' : on ? 'within' : '',
         // The project link shows all of its tasks again.
         onclick: () => { if (picked && atProject) c.showMilestone(p, ''); else if (picked) uiFor(p.path).milestone = ''; },
       }, h('span', null, p.title), open ? h('span.count', null, open) : null),
+      focusBtn,
       milestones.length ? h('ul.milestones', null, milestones) : null);
   };
   const live = workspace.projects.filter((p) => p.status !== 'archived');
@@ -622,7 +699,7 @@ function ctx() {
 
 /** Open a project page, or redraw it after its filters changed. @param {string} path */
 function showProject(path) {
-  if (location.hash !== projectHref(path)) {
+  if (hashLink.strip(location.hash) !== projectHref(path)) {
     location.hash = projectHref(path);
     return;
   }
@@ -713,6 +790,17 @@ function notFound(path) {
 }
 
 window.addEventListener('hashchange', () => {
+  // Links inside the page carry only the route; put the open workspace back after it.
+  if (session) {
+    const full = hashLink.apply(location.hash, session);
+    if (full !== location.hash) {
+      try {
+        history.replaceState(null, '', location.pathname + location.search + full);
+      } catch {
+        // file:// in some browsers: the hash stays as it is and the route still works.
+      }
+    }
+  }
   editing = editNext;
   editNext = false;
   renderSidebar();
@@ -742,6 +830,8 @@ document.getElementById('grant')?.addEventListener('click', async () => {
 document.getElementById('switch')?.addEventListener('click', () => {
   storage = null;
   workspace = null;
+  session = null;
+  focusProject = '';
   history.replaceState(null, '', location.pathname);
   showPicker();
 });

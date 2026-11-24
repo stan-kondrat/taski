@@ -1252,7 +1252,7 @@ function taskView(ctx, task, project, ui) {
   // View and Files are addresses (?tab=files); Edit is a mode of this page.
   const go = (/** @type {string} */ tab) => {
     const href = taskHref(task.path) + (tab === 'files' ? '?tab=files' : '');
-    if (location.hash !== href) location.hash = href;
+    if (Taski.hashlink.strip(location.hash) !== href) location.hash = href;
     else if (ui.editing) ui.setEditing(false);
   };
   const tabsFor = (/** @type {'view' | 'files' | 'edit'} */ active) => h('div.tabs.project-tabs', { role: 'tablist', 'aria-label': 'Task' },

@@ -18,6 +18,7 @@
   <script src="../taski_src/config.js"></script>
   <script src="../taski_src/markdown.js"></script>
   <script src="../taski_src/storage/path.js"></script>
+  <script src="../taski_src/hashlink.js"></script>
   <script src="../taski_src/storage/storage.js"></script>
   <script src="../taski_src/storage/http.js"></script>
   <script src="../taski_src/storage/scoped.js"></script>
@@ -42,6 +43,15 @@
 
     const TASK = '---\ntype: task\nstatus: todo\nowner: me\n---\n\n# Hello world\n\nIntro.\n\n```\n- [ ] not a box\n```\n\n- [ ] one\n- [x] two\n\n## Files\n\n- [Notes](./notes.md)\n- [Site](https://example.com)\n';
 
+    test('hashlink puts session params first and keeps the tab', () => {
+      const { apply, strip, session } = Taski.hashlink;
+      const full = apply('#/p/app?tab=files', { storage: 'server', path: 'work', project: 'app' });
+      eq(full, '#/p/app?storage=server&path=work&project=app&tab=files');
+      eq(strip(full), '#/p/app?tab=files');
+      eq(session(full).path, 'work');
+      eq(apply('', { storage: 'http', path: 'https://x.org/t/' }), '#/?storage=http&path=https://x.org/t/');
+      eq(strip('#/?storage=server'), '#/');
+    });
     test('parseFrontmatter keeps order and body', () => {
       const fm = md.parseFrontmatter(TASK);
       eq([...fm.fields.keys()], ['type', 'status', 'owner']);
@@ -377,7 +387,7 @@
       eq([s.label, s.canWrite, s.canList], ['Folder “notes” (copy)', false, true]);
       eq((await s.list('')).map((e) => `${e.kind}:${e.path}`), ['file:README.md', 'dir:proj']);
       eq((await s.list('proj')).map((e) => e.name), ['tasks']);
-      eq(await s.read('proj/tasks/a.md'), { text: 'A', rev: '1000-1' });
+      eq(await s.read('proj/tasks/a.md'), { text: 'A', rev: '1000-1', updated: 1000 });
       let missing = false;
       try { await s.read('.git/config'); } catch (e) { missing = e.name === 'NotFoundError'; }
       eq(missing, true);
