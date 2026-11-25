@@ -18,6 +18,7 @@ const { canPreview, fileKind, listAttachments, projectOwner, taskOwner } = Taski
  * @property {string} [sort]   One of SORTS; 'default' keeps the workflow order.
  * @property {string[]} [statuses]  Show tasks with any of these statuses; all when empty.
  * @property {string} milestone  Show only this milestone's tasks: '' for all, NO_MILESTONE for tasks without one.
+ * @property {string} [blocked] One of BLOCKED_FILTERS; '' for all tasks; kept in this browser. Blocked means any blocker is not closed; blockers are tasks holding up a task that is not closed.
  * @property {string} layout   'list' | 'board' | 'graph'
  * @property {string} [tab]    'tasks' | 'files' | 'about' | 'settings'; set from the URL.
  */
@@ -50,6 +51,8 @@ const SORTS = {
   'updated-asc': 'Updated, oldest first',
 };
 const SORT_KEY = 'taski.sort';
+const BLOCKED_KEY = 'taski.blocked';
+const BLOCKED_FILTERS = { blocked: 'blocked', unblocked: 'not blocked', blockers: 'blockers', ready: 'not blocked blockers' };
 
 /** When a task was created (ms since the epoch, from `created:`); 0 when it has none. @param {import('../tasks.js').Task} t */
 function createdAt(t) {
@@ -621,11 +624,33 @@ function projectView(ctx, project, ui) {
     }
     if (!(ui.sort in SORTS)) ui.sort = 'default';
   }
+  if (!ui.blocked) {
+    try {
+      ui.blocked = localStorage.getItem(BLOCKED_KEY) || '';
+    } catch {
+      ui.blocked = '';
+    }
+    if (!(ui.blocked in BLOCKED_FILTERS)) ui.blocked = '';
+  }
   const body = h('div.tasks');
   const counts = h('span.muted');
   const labelBar = h('div.label-bar');
   const statusBar = h('div.status-bar');
   const milestoneBar = h('div.milestone-bar');
+  const blockedBar = h('div.status-bar');
+  const holdsUp = (/** @type {import('../tasks.js').Task} */ t) => t.relations.blocks.some((r) => !r.closed);
+  const blockedMatch = (/** @type {string} */ k, /** @type {import('../tasks.js').Task} */ t) =>
+    k === 'blockers' ? holdsUp(t)
+    : k === 'ready' ? holdsUp(t) && !isBlocked(t)
+    : (k === 'blocked') === isBlocked(t);
+  const setBlocked = (/** @type {string} */ v) => {
+    ui.blocked = v;
+    try {
+      localStorage.setItem(BLOCKED_KEY, v);
+    } catch {
+      // private mode: not remembered
+    }
+  };
   const activeBar = h('div.active-filters');
   const searchInput = /** @type {HTMLInputElement} */ (h('input.search', { type: 'search', placeholder: 'Title, label or milestone', value: ui.query, 'aria-label': 'Filter tasks',
     oninput: (/** @type {Event} */ e) => { ui.query = /** @type {HTMLInputElement} */ (e.target).value; render(); } }));
@@ -634,17 +659,20 @@ function projectView(ctx, project, ui) {
       h('button', { type: 'button', 'aria-label': `Clear ${kind} filter`, title: 'Clear', onclick: () => { clear(); render(); } }, '×'));
   if (ui.milestone && ui.milestone !== NO_MILESTONE && !project.milestones.some((m) => m.name === ui.milestone)) ui.milestone = '';
 
-  const matches = (/** @type {import('../tasks.js').Task} */ t) => {
+  const matches = (/** @type {import('../tasks.js').Task} */ t, /** @type {boolean} */ skipBlocked = false) => {
     const q = ui.query.toLowerCase();
     return (!q || t.title.toLowerCase().includes(q) || t.milestone.toLowerCase().includes(q) || t.tags.some((tag) => tag.toLowerCase().includes(q))) &&
       (!ui.labels.length || ui.labels.some((l) => t.tags.includes(l))) &&
       (!ui.statuses?.length || ui.statuses.includes(t.status)) &&
-      (!ui.milestone || t.milestone === (ui.milestone === NO_MILESTONE ? '' : ui.milestone));
+      (!ui.milestone || t.milestone === (ui.milestone === NO_MILESTONE ? '' : ui.milestone)) &&
+      (skipBlocked || !ui.blocked || blockedMatch(ui.blocked, t));
   };
+  // Same Open/Closed tab and layout rule as the list below.
+  const inView = (/** @type {import('../tasks.js').Task} */ t) => ui.layout === 'board' || (ui.layout === 'graph' ? isOpen(t, project) : ui.filter === 'all' || (ui.filter === 'open') === isOpen(t, project));
   // Through the app, so the sidebar highlights the milestone too.
   const pickMilestone = (/** @type {string} */ name) => ctx.showMilestone(project, ui.milestone === name ? '' : name);
   const render = () => {
-    const filtered = sortTasks(project.tasks.filter(matches), ui.sort || 'default');
+    const filtered = sortTasks(project.tasks.filter((t) => matches(t)), ui.sort || 'default');
     const shown = ui.layout === 'board' ? filtered
       : ui.layout === 'graph' ? filtered.filter((t) => isOpen(t, project))
       : filtered.filter((t) => ui.filter === 'all' || (ui.filter === 'open') === isOpen(t, project));
@@ -664,8 +692,16 @@ function projectView(ctx, project, ui) {
       ...(ui.layout === 'list' && ui.filter !== 'open' ? [chip('Show', ui.filter, () => { ui.filter = 'open'; for (const b of tabs) b.classList.toggle('on', b.textContent === 'open'); })] : []),
       ...(ui.statuses || []).map((st) => chip('Status', st, () => { ui.statuses = (ui.statuses || []).filter((x) => x !== st); })),
       ...(ui.milestone ? [chip('Milestone', ui.milestone === NO_MILESTONE ? 'none' : ui.milestone, () => { ui.milestone = ''; })] : []),
+      ...(ui.blocked ? [chip('Show', BLOCKED_FILTERS[/** @type {keyof typeof BLOCKED_FILTERS} */ (ui.blocked)], () => { setBlocked(''); })] : []),
       ...ui.labels.map((l) => chip('Label', l, () => { ui.labels = ui.labels.filter((x) => x !== l); })));
     for (const b of tabs) b.hidden = ui.layout !== 'list';
+    blockedBar.replaceChildren(...Object.entries(BLOCKED_FILTERS).map(([key, label]) => {
+      const on = ui.blocked === key;
+      return h(`button.status-opt${on ? '.on' : ''}`, {
+        type: 'button', 'aria-pressed': on ? 'true' : 'false', title: `Show ${label} tasks`,
+        onclick: () => { setBlocked(on ? '' : key); render(); },
+      }, label, h('span.count', null, project.tasks.filter((t) => inView(t) && matches(t, true) && blockedMatch(key, t)).length));
+    }));
     const allStatuses = [...project.workflow.statuses, ...new Set(project.tasks.map((t) => t.status).filter((x) => !project.workflow.statuses.includes(x)))];
     statusBar.replaceChildren(...allStatuses.map((st) => {
       const on = !!ui.statuses?.includes(st);
@@ -831,6 +867,8 @@ function projectView(ctx, project, ui) {
             h('button.small.icon', { type: 'button', title: 'Hide filters', 'aria-label': 'Hide filters', onclick: () => toggleFold('right'), html: FILTER_ICON })),
           searchInput,
           h('div.tabs', { role: 'group', 'aria-label': 'Show' }, tabs),
+          h('h4', null, 'Blocked'),
+          blockedBar,
           h('h4', null, 'Task statuses'),
           statusBar,
           h('h4', null, 'Milestones'),
