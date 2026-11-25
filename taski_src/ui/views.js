@@ -7,7 +7,7 @@
 const { h, select, toggleFold } = Taski.dom;
 const { parseFrontmatter, renderMarkdown, withoutSection } = Taski.markdown;
 const { basename, dirname, join, resolveRelative } = Taski.path;
-const { DEFAULT_WORKFLOW, PRIORITIES, RELATION_FIELDS, formatMilestones, isBlocked, milestonesFrom, splitList, statusKind, today } = Taski.tasks;
+const { DEFAULT_WORKFLOW, LINEAR_PRIORITIES, RELATION_FIELDS, formatMilestones, isBlocked, milestonesFrom, priorityRank, splitList, statusKind, today } = Taski.tasks;
 const { canPreview, fileKind, listAttachments, projectOwner, taskOwner } = Taski.files;
 
 /**
@@ -17,6 +17,7 @@ const { canPreview, fileKind, listAttachments, projectOwner, taskOwner } = Taski
  * @property {string[]} labels Show tasks with any of these labels.
  * @property {string} [sort]   One of SORTS; 'default' keeps the workflow order.
  * @property {string[]} [statuses]  Show tasks with any of these statuses; all when empty.
+ * @property {string[]} [priorities]  Show tasks with any of these priorities ('' is no priority); all when empty.
  * @property {string} milestone  Show only this milestone's tasks: '' for all, NO_MILESTONE for tasks without one.
  * @property {string} [blocked] One of BLOCKED_FILTERS; '' for all tasks; kept in this browser. Blocked means any blocker is not closed; blockers are tasks holding up a task that is not closed.
  * @property {string} layout   'list' | 'board' | 'graph'
@@ -40,6 +41,7 @@ const { canPreview, fileKind, listAttachments, projectOwner, taskOwner } = Taski
  * @property {(project: import('../projects.js').Project, label: string) => void} showLabel
  * @property {(project: import('../projects.js').Project, milestone: string) => void} showMilestone
  * @property {(project: import('../projects.js').Project, from: string, to: string) => Promise<void>} moveStatus
+ * @property {(project: import('../projects.js').Project, from: string, to: string) => Promise<void>} movePriority  Give every task with priority `from` the priority `to` ('' for none).
  */
 
 /** Sort choices for the task list: key → label. Created / Updated, newest or oldest first. */
@@ -49,6 +51,8 @@ const SORTS = {
   'created-asc': 'Created, oldest first',
   'updated-desc': 'Updated, newest first',
   'updated-asc': 'Updated, oldest first',
+  'priority-desc': 'Priority, highest first',
+  'priority-asc': 'Priority, lowest first',
 };
 const SORT_KEY = 'taski.sort';
 const BLOCKED_KEY = 'taski.blocked';
@@ -61,13 +65,19 @@ function createdAt(t) {
 }
 
 /**
- * Stable sort by creation or update time. Tasks without the time go last, whichever direction.
- * Ties keep the order they came in.
+ * Stable sort by priority, or by creation or update time. Tasks without the value (no priority,
+ * no time) go last, whichever direction. Ties keep the order they came in.
  * @param {import('../tasks.js').Task[]} tasks
  * @param {string} sort
+ * @param {(t: import('../tasks.js').Task) => number} [rankOf]  Priority rank of a task in its own project, 0 for none.
  */
-function sortTasks(tasks, sort) {
+function sortTasks(tasks, sort, rankOf = () => 0) {
   const [by, dir] = sort.split('-');
+  if (by === 'priority') {
+    const sign = dir === 'asc' ? -1 : 1;
+    return tasks.map((t, i) => ({ t, i, v: rankOf(t) })).sort((a, b) =>
+      (!a.v - !b.v) || (a.v - b.v) * sign || a.i - b.i).map((x) => x.t);
+  }
   if (by !== 'created' && by !== 'updated') return tasks;
   const time = (/** @type {import('../tasks.js').Task} */ t) => (by === 'created' ? createdAt(t) : t.updated || 0);
   const sign = dir === 'asc' ? 1 : -1;
@@ -81,6 +91,74 @@ function stampFor(t, sort) {
   if (by === 'created') return t.fields.get('created') ? `created ${t.fields.get('created')}` : 'no created date';
   if (by === 'updated') return t.updated ? `updated ${new Date(t.updated).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : 'updated unknown';
   return '';
+}
+
+/**
+ * Icon of a priority by its rank in the project's list, as in Linear: dashes for none (or a value the
+ * list lacks), "!" for the highest, then signal bars: the more bars, the higher.
+ * @param {import('../tasks.js').Workflow} wf
+ * @param {string} priority
+ */
+function priorityIcon(wf, priority) {
+  const rank = priorityRank(wf, priority);
+  const n = wf.priorities.length;
+  const svg = (/** @type {string} */ inner) => `<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="currentColor">${inner}</svg>`;
+  if (rank === 0 || rank > n) return svg('<path d="M1.5 7h2.5M5.75 7h2.5M10 7h2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>');
+  if (rank === 1) return svg('<rect x="1.5" y="1.5" width="11" height="11" rx="2.5"/><path d="M7 4.2v3.6" stroke="var(--bg, #fff)" stroke-width="1.5" stroke-linecap="round"/><circle cx="7" cy="9.9" r="0.9" fill="var(--bg, #fff)"/>');
+  const levels = n - 1; // ranks 2…n share three bars
+  const lit = levels === 1 ? 2 : Math.max(1, Math.round((3 * (levels - (rank - 2))) / levels));
+  const bar = (/** @type {number} */ i) => `<rect x="${1.5 + i * 4}" y="${9 - i * 3}" width="2.6" height="${3.5 + i * 3}" rx="0.8"${i < lit ? '' : ' opacity="0.3"'}/>`;
+  return svg(bar(0) + bar(1) + bar(2));
+}
+
+/** CSS class of a task's priority: `rank-1` for the highest, `rank-last` for the lowest of three or more. @param {import('../tasks.js').Workflow} wf @param {string} priority */
+function priorityClass(wf, priority) {
+  const rank = priorityRank(wf, priority);
+  return rank === 1 ? 'rank-1' : rank > 1 && rank === wf.priorities.length && rank > 2 ? 'rank-last' : '';
+}
+
+/** Is the task at the top of the project's priorities? Also true for a priority named `high`, which stays urgent when a list adds one above it. @param {import('../tasks.js').Workflow} wf @param {string} priority */
+const isHighPriority = (wf, priority) => !!priority && (priorityRank(wf, priority) === 1 || priority === 'high');
+
+/**
+ * The priority chip of a task row or card: icon and name. `normal` is not shown, as before.
+ * @param {import('../tasks.js').Task} t
+ * @param {import('../projects.js').Project} [project]
+ */
+function priorityChip(t, project) {
+  if (!t.priority || t.priority === 'normal') return null;
+  const wf = workflowOf(project);
+  return h(`span.prio.${priorityClass(wf, t.priority) || 'p-none'}`, { title: `Priority: ${t.priority}` },
+    h('span.prio-icon', { html: priorityIcon(wf, t.priority) }), t.priority);
+}
+
+/**
+ * Priority control: a select of No priority and the project's priorities, each numbered, with its icon
+ * beside it. Typing a number picks that priority (0 clears it). A value the list lacks is kept and marked.
+ * @param {import('../tasks.js').Workflow} wf
+ * @param {string} value
+ * @param {Record<string, any>} [attrs]  Passed to the select, e.g. disabled and onchange.
+ */
+function prioritySelect(wf, value, attrs = {}) {
+  const listed = wf.priorities.includes(value) || !value;
+  const names = listed ? wf.priorities : [value, ...wf.priorities];
+  const sel = /** @type {HTMLSelectElement} */ (h('select', { ...attrs, 'aria-label': 'Priority' },
+    h('option', { value: '', selected: !value }, '0 · No priority'),
+    names.map((n, i) => h('option', { value: n, selected: n === value },
+      listed ? `${i + 1} · ${n}` : i === 0 ? `${n} (not in the project’s list)` : `${i} · ${n}`))));
+  const icon = h('span.prio-icon', { html: priorityIcon(wf, value) });
+  sel.addEventListener('change', () => { icon.innerHTML = priorityIcon(wf, sel.value); });
+  sel.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey || !/^[0-9]$/.test(e.key)) return;
+    const pick = e.key === '0' ? '' : wf.priorities[Number(e.key) - 1];
+    if (pick === undefined) return;
+    e.preventDefault();
+    if (sel.value !== pick) {
+      sel.value = pick;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  });
+  return h('span.prio-select', null, icon, sel);
 }
 
 /** `ListUi.milestone` value for tasks without a milestone; no name can be empty. */
@@ -278,11 +356,11 @@ function taskLabels(ctx, t, project) {
  * @param {boolean} [showProject]  Name the project, for lists across projects.
  */
 function taskRow(ctx, t, project, showProject = false, stamp = '') {
-  return h(`li.task-row.p-${t.priority}${isOpen(t, project) ? '' : '.closed'}`, null,
+  return h(`li.task-row${priorityClass(workflowOf(project), t.priority) ? `.${priorityClass(workflowOf(project), t.priority)}` : ''}${isOpen(t, project) ? '' : '.closed'}`, null,
     // Read-only: change a status on the task page.
     h(`span.${statusClass(workflowOf(project), t.status).replace(/ /g, '.')}.status-pill`, { title: 'Status: change it on the task page' }, t.status),
     h('a.title', { href: taskHref(t.path) }, t.title),
-    t.priority !== 'normal' ? h(`span.prio.p-${t.priority}`, { title: 'Priority' }, t.priority) : null,
+    priorityChip(t, project),
     showProject && project ? h('a.proj', { href: projectHref(project.path) }, project.title) : null,
     milestoneChip(ctx, t, project),
     relationChips(t, project),
@@ -335,7 +413,7 @@ function overviewView(ctx) {
   const live = ws.projects.filter((p) => p.status !== 'archived');
   const archived = ws.projects.filter((p) => p.status === 'archived');
   const focus = items.filter((x) =>
-    statusKind(x.project.workflow, x.task.status) === 'active' || (x.task.due && x.task.due <= soonStr) || x.task.priority === 'high');
+    statusKind(x.project.workflow, x.task.status) === 'active' || (x.task.due && x.task.due <= soonStr) || isHighPriority(workflowOf(x.project), x.task.priority));
 
   let sort = 'default';
   try {
@@ -347,7 +425,7 @@ function overviewView(ctx) {
   const focusList = h('ul.task-list');
   const drawFocus = () => {
     const byTask = new Map(focus.map((x) => [x.task, x]));
-    const ordered = sortTasks(focus.map((x) => x.task), sort).map((t) => /** @type {(typeof focus)[number]} */ (byTask.get(t)));
+    const ordered = sortTasks(focus.map((x) => x.task), sort, (t) => priorityRank(workflowOf(/** @type {any} */ (byTask.get(t)).project), t.priority)).map((t) => /** @type {(typeof focus)[number]} */ (byTask.get(t)));
     focusList.replaceChildren(...ordered.map((x) => taskRow(ctx, x.task, x.project, true, stampFor(x.task, sort))));
   };
   const focusSort = /** @type {HTMLSelectElement} */ (h('select.sort', { 'aria-label': 'Sort tasks', title: 'Sort tasks' },
@@ -412,9 +490,20 @@ function projectSettings(ctx, project, open) {
   const closed = input(fm.get('closed-statuses') || '', [...wf.closed].join(', '));
   const labels = input(fm.get('labels') || '', 'bug, idea, research');
   const milestones = input(fm.get('milestones') || '', 'MVP (2026-12-01), Beta, 1.0');
+  const priorities = input(fm.get('priorities') || '', wf.priorities.join(', '));
+  const presetBtn = h('button.small', { type: 'button', disabled: !ctx.storage.canWrite, title: LINEAR_PRIORITIES.join(', '),
+    onclick: () => { priorities.value = LINEAR_PRIORITIES.join(', '); } }, 'Use urgent, high, medium, low');
   const form = /** @type {HTMLFormElement} */ (h('form.settings', {
     onsubmit: async (/** @type {Event} */ e) => {
       e.preventDefault();
+      // Priorities that tasks use and the new list drops stay on those tasks; say so before saving.
+      const nextPriorities = splitList(priorities.value);
+      const listNow = nextPriorities.length ? nextPriorities : DEFAULT_WORKFLOW.priorities;
+      const dropped = [...new Set(project.tasks.map((t) => t.priority).filter((x) => x && !listNow.includes(x) && wf.priorities.includes(x)))];
+      if (dropped.length) {
+        const count = project.tasks.filter((t) => dropped.includes(t.priority)).length;
+        if (!confirm(`${count} task${count > 1 ? 's' : ''} use ${dropped.join(', ')}, which the new list drops. They keep it and show under "not in the list" until you move them. Save anyway?`)) return;
+      }
       form.classList.add('busy');
       try {
         // Leave a field out of the README while it says the same as the default.
@@ -424,6 +513,7 @@ function projectSettings(ctx, project, open) {
           'active-statuses': splitList(active.value).join(', '),
           'closed-statuses': splitList(closed.value).join(', '),
           labels: splitList(labels.value).join(', '),
+          priorities: nextPriorities.join(', '),
           milestones: formatMilestones(milestonesFrom(new Map([['milestones', milestones.value]]))),
         });
       } finally {
@@ -437,6 +527,8 @@ function projectSettings(ctx, project, open) {
   h('label', null, 'In progress', active, h('span.hint', null, 'Shown under Focus.')),
   h('label', null, 'Closed', closed, h('span.hint', null, 'Finished; hidden from open tasks.')),
   h('label.wide', null, 'Labels', labels, h('span.hint', null, 'Suggested when labelling tasks. Labels tasks already use are added automatically.')),
+  h('label.wide', null, 'Priorities, in order', priorities,
+    h('span.hint', null, `Comma-separated, highest first; the position is the rank (1, 2, …). Tasks can also have no priority. Empty uses ${DEFAULT_WORKFLOW.priorities.join(', ')}.`), presetBtn),
   h('label.wide', null, 'Milestones, in order', milestones,
     h('span.hint', null, 'Comma-separated. Add a date in brackets: MVP (2026-12-01). Tasks pick one in their Milestone field.')),
   ctx.storage.canWrite ? h('div.actions', null, h('button.primary', { type: 'submit' }, 'Save settings'),
@@ -456,7 +548,21 @@ function projectSettings(ctx, project, open) {
             } }, 'Move'));
         }))
     : null;
-  return h('details.panel.settings-panel', { open: open || strays.length ? true : null }, h('summary', null, 'Settings'), form, moves);
+  // Same for priorities: a value tasks hold that the list lacks (after an edit, or a rename: move them to the new name).
+  const prioStrays = [...new Set(project.tasks.map((t) => t.priority).filter((x) => x && !wf.priorities.includes(x)))];
+  const prioMoves = prioStrays.length && ctx.storage.canWrite
+    ? h('div.moves', null, h('p.muted.small', null, 'These priorities are used by tasks but not listed above:'),
+        prioStrays.map((pr) => {
+          const to = prioritySelect(wf, '', { 'aria-label': `New priority for ${pr}` });
+          const n = project.tasks.filter((t) => t.priority === pr).length;
+          return h('div.move', null, h('span', null, h('strong', null, pr), ` · ${n} task${n > 1 ? 's' : ''} → `), to,
+            h('button', { type: 'button', onclick: (/** @type {Event} */ e) => {
+              /** @type {HTMLElement} */ (e.currentTarget).closest('.move')?.classList.add('busy');
+              ctx.movePriority(project, pr, /** @type {HTMLSelectElement} */ (to.querySelector('select')).value);
+            } }, 'Move'));
+        }))
+    : null;
+  return h('details.panel.settings-panel', { open: open || strays.length || prioStrays.length ? true : null }, h('summary', null, 'Settings'), form, moves, prioMoves);
 }
 
 /** Side-panel icon for the details toggle. */
@@ -551,7 +657,7 @@ function graph(ctx, project, tasks) {
     const p = /** @type {{x: number, y: number}} */ (pos.get(t.path));
     const title = t.title.length > 30 ? `${t.title.slice(0, 29)}…` : t.title;
     const kind = statusKind(wf, t.status);
-    const cls = `node k-${kind}${isBlocked(t) ? ' blocked' : ''}${t.priority === 'high' ? ' high' : ''}`;
+    const cls = `node k-${kind}${isBlocked(t) ? ' blocked' : ''}${isHighPriority(wf, t.priority) ? ' high' : ''}`;
     return `<a href="${esc(taskHref(t.path))}" class="${cls}"><title>${esc(t.title)} · ${esc(t.status)}</title>`
       + `<rect x="${p.x}" y="${p.y}" width="${W}" height="${H}" rx="7"/>`
       + `<text x="${p.x + 10}" y="${p.y + 17}" class="t">${esc(title)}</text>`
@@ -591,13 +697,13 @@ function board(ctx, project, tasks) {
     },
     h('h3', null, h(`span.${statusClass(wf, status).replace(/ /g, '.')}`, null, status), h('span.count', null, cards.length),
       wf.statuses.includes(status) ? null : h('span.hint', { title: 'Not in this project’s statuses' }, '?')),
-    h('ul', null, cards.map((t) => h(`li.card.p-${t.priority}`, {
+    h('ul', null, cards.map((t) => h(`li.card${priorityClass(wf, t.priority) ? `.${priorityClass(wf, t.priority)}` : ''}`, {
       draggable: canWrite ? 'true' : null,
       ondragstart: (/** @type {DragEvent} */ e) => e.dataTransfer?.setData('text/x-taski-task', t.path),
     },
     h('a.title', { href: taskHref(t.path) }, t.title),
     h('div.chips', null,
-      t.priority !== 'normal' ? h(`span.prio.p-${t.priority}`, null, t.priority) : null,
+      priorityChip(t, project),
       milestoneChip(ctx, t, project),
       relationChips(t, project),
       taskLabels(ctx, t, project),
@@ -616,6 +722,7 @@ function board(ctx, project, tasks) {
 function projectView(ctx, project, ui) {
   const tab = ui.tab || 'tasks';
   ui.statuses ||= [];
+  ui.priorities ||= [];
   if (!ui.sort) {
     try {
       ui.sort = localStorage.getItem(SORT_KEY) || 'default';
@@ -638,6 +745,7 @@ function projectView(ctx, project, ui) {
   const statusBar = h('div.status-bar');
   const milestoneBar = h('div.milestone-bar');
   const blockedBar = h('div.status-bar');
+  const priorityBar = h('div.status-bar');
   const holdsUp = (/** @type {import('../tasks.js').Task} */ t) => t.relations.blocks.some((r) => !r.closed);
   const blockedMatch = (/** @type {string} */ k, /** @type {import('../tasks.js').Task} */ t) =>
     k === 'blockers' ? holdsUp(t)
@@ -664,6 +772,7 @@ function projectView(ctx, project, ui) {
     return (!q || t.title.toLowerCase().includes(q) || t.milestone.toLowerCase().includes(q) || t.tags.some((tag) => tag.toLowerCase().includes(q))) &&
       (!ui.labels.length || ui.labels.some((l) => t.tags.includes(l))) &&
       (!ui.statuses?.length || ui.statuses.includes(t.status)) &&
+      (!ui.priorities?.length || ui.priorities.includes(t.priority)) &&
       (!ui.milestone || t.milestone === (ui.milestone === NO_MILESTONE ? '' : ui.milestone)) &&
       (skipBlocked || !ui.blocked || blockedMatch(ui.blocked, t));
   };
@@ -672,7 +781,7 @@ function projectView(ctx, project, ui) {
   // Through the app, so the sidebar highlights the milestone too.
   const pickMilestone = (/** @type {string} */ name) => ctx.showMilestone(project, ui.milestone === name ? '' : name);
   const render = () => {
-    const filtered = sortTasks(project.tasks.filter((t) => matches(t)), ui.sort || 'default');
+    const filtered = sortTasks(project.tasks.filter((t) => matches(t)), ui.sort || 'default', (t) => priorityRank(project.workflow, t.priority));
     const shown = ui.layout === 'board' ? filtered
       : ui.layout === 'graph' ? filtered.filter((t) => isOpen(t, project))
       : filtered.filter((t) => ui.filter === 'all' || (ui.filter === 'open') === isOpen(t, project));
@@ -691,6 +800,7 @@ function projectView(ctx, project, ui) {
       ...(ui.query ? [chip('Search', ui.query, () => { ui.query = ''; })] : []),
       ...(ui.layout === 'list' && ui.filter !== 'open' ? [chip('Show', ui.filter, () => { ui.filter = 'open'; for (const b of tabs) b.classList.toggle('on', b.textContent === 'open'); })] : []),
       ...(ui.statuses || []).map((st) => chip('Status', st, () => { ui.statuses = (ui.statuses || []).filter((x) => x !== st); })),
+      ...(ui.priorities || []).map((pr) => chip('Priority', pr || 'none', () => { ui.priorities = (ui.priorities || []).filter((x) => x !== pr); })),
       ...(ui.milestone ? [chip('Milestone', ui.milestone === NO_MILESTONE ? 'none' : ui.milestone, () => { ui.milestone = ''; })] : []),
       ...(ui.blocked ? [chip('Show', BLOCKED_FILTERS[/** @type {keyof typeof BLOCKED_FILTERS} */ (ui.blocked)], () => { setBlocked(''); })] : []),
       ...ui.labels.map((l) => chip('Label', l, () => { ui.labels = ui.labels.filter((x) => x !== l); })));
@@ -710,6 +820,15 @@ function projectView(ctx, project, ui) {
         type: 'button', 'aria-pressed': on ? 'true' : 'false', title: `Show tasks with status ${st}`,
         onclick: () => { ui.statuses = on ? (ui.statuses || []).filter((x) => x !== st) : [...(ui.statuses || []), st]; render(); },
       }, st, h('span.count', null, n));
+    }));
+    const prioritySteps = ['', ...project.workflow.priorities, ...new Set(project.tasks.map((t) => t.priority).filter((x) => x && !project.workflow.priorities.includes(x)))];
+    priorityBar.replaceChildren(...prioritySteps.map((pr) => {
+      const on = !!ui.priorities?.includes(pr);
+      const n = project.tasks.filter((t) => t.priority === pr).length;
+      return h(`button.status-opt${on ? '.on' : ''}`, {
+        type: 'button', 'aria-pressed': on ? 'true' : 'false', title: pr ? `Show tasks with priority ${pr}` : 'Show tasks without a priority',
+        onclick: () => { ui.priorities = on ? (ui.priorities || []).filter((x) => x !== pr) : [...(ui.priorities || []), pr]; render(); },
+      }, h('span.prio-icon', { html: priorityIcon(project.workflow, pr) }), pr || 'No priority', h('span.count', null, n));
     }));
     labelBar.replaceChildren(...(project.labels.length
       ? [...project.labels.map((l) => labelChip(l, {
@@ -772,7 +891,8 @@ function projectView(ctx, project, ui) {
   const field = (/** @type {string} */ label, /** @type {Node} */ control, wide = false) => h(`label${wide ? '.wide' : ''}`, null, label, control);
   const titleInput = /** @type {HTMLInputElement} */ (h('input', { type: 'text', placeholder: 'Task title', required: true, 'aria-label': 'Task title' }));
   const statusSel = /** @type {HTMLSelectElement} */ (select(project.workflow.initial, project.workflow.statuses));
-  const prioSel = /** @type {HTMLSelectElement} */ (select('normal', ['low', 'normal', 'high']));
+  const prioField = prioritySelect(project.workflow, project.workflow.priorities.includes('normal') ? 'normal' : '');
+  const prioSel = /** @type {HTMLSelectElement} */ (prioField.querySelector('select'));
   const dueIn = /** @type {HTMLInputElement} */ (h('input', { type: 'date' }));
   const estIn = /** @type {HTMLInputElement} */ (h('input', { type: 'text', placeholder: '30m, 3h, 1d' }));
   const msSel = /** @type {HTMLSelectElement} */ (select('', ['', ...project.milestones.map((m) => m.name)]));
@@ -788,7 +908,7 @@ function projectView(ctx, project, ui) {
       if (!v) return;
       /** @type {HTMLElement} */ (e.currentTarget).classList.add('busy');
       await ctx.createTask(project, v, singleFile.checked, {
-        status: statusSel.value, priority: /** @type {any} */ (prioSel.value), due: dueIn.value, estimate: estIn.value.trim(),
+        status: statusSel.value, priority: prioSel.value, due: dueIn.value, estimate: estIn.value.trim(),
         milestone: msSel.value, tags: splitList(tagsIn.value), description: descIn.value,
       });
       newTask.close();
@@ -797,7 +917,7 @@ function projectView(ctx, project, ui) {
   h('h2', null, 'New task'),
   field('Title', titleInput, true),
   field('Status', statusSel),
-  field('Priority', prioSel),
+  field('Priority', prioField),
   field('Due', dueIn),
   field('Estimate', estIn),
   field('Milestone', msSel),
@@ -869,6 +989,8 @@ function projectView(ctx, project, ui) {
           h('div.tabs', { role: 'group', 'aria-label': 'Show' }, tabs),
           h('h4', null, 'Blocked'),
           blockedBar,
+          h('h4', null, 'Priority'),
+          priorityBar,
           h('h4', null, 'Task statuses'),
           statusBar,
           h('h4', null, 'Milestones'),
@@ -1337,7 +1459,7 @@ function taskView(ctx, task, project, ui) {
           h('button.small.icon', { type: 'button', title: 'Hide details', 'aria-label': 'Hide details', onclick: () => toggleFold('right'), html: SIDEBAR_ICON })),
         h('div.meta', null,
           h('label', null, 'Status', statusSelect(ctx, task, project)),
-          h('label', null, 'Priority', select(task.priority, PRIORITIES, { disabled: w, onchange: field('priority') })),
+          h('label', null, 'Priority', prioritySelect(workflowOf(project), task.priority, { disabled: w, onchange: field('priority') })),
           h('label', null, 'Due', h('input', { type: 'date', value: task.due, disabled: w, onchange: field('due') })),
           h('label', null, 'Milestone', milestoneSelect(task, project, { disabled: w, onchange: field('milestone') })),
           h('div.field.grow', null, h('span', null, 'Labels'), labelEditor(ctx, task, project)),
@@ -1407,5 +1529,5 @@ function fileView(ctx, path, file, ui) {
       task ? h('a', { href: taskHref(task.path) }, `← ${task.title}`) : project ? h('a', { href: projectHref(project.path) }, `← ${project.title}`) : null));
 }
 
-Taski.views = { encodePath, taskHref, projectHref, fileHref, isOpen, labelHue, overviewView, projectView, taskView, fileView };
+Taski.views = { encodePath, taskHref, projectHref, fileHref, isOpen, labelHue, overviewView, projectView, taskView, fileView, sortTasks, priorityIcon, priorityClass, prioritySelect };
 })(window.Taski = window.Taski || {});

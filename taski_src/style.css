@@ -154,8 +154,13 @@ select.status { font-size: 12px; padding: 2px 6px; border-radius: 99px; font-wei
   color: var(--muted);
   white-space: nowrap;
 }
-.prio.p-high { color: var(--danger); border-color: var(--danger); }
-.prio.p-low { opacity: 0.7; }
+.prio { display: inline-flex; align-items: center; gap: 4px; }
+.prio.rank-1 { color: var(--danger); border-color: var(--danger); }
+.prio.rank-last { opacity: 0.7; }
+.prio-icon { display: inline-flex; align-items: center; line-height: 0; }
+.prio-select { display: inline-flex; align-items: center; gap: 6px; }
+.prio-select select { flex: 1; min-width: 0; }
+.status-opt .prio-icon { margin-right: -2px; }
 .due.overdue { color: var(--danger); border-color: var(--danger); }
 .due.today { color: var(--warn); border-color: var(--warn); }
 
@@ -330,7 +335,7 @@ button.link { border: 0; background: none; color: var(--accent); padding: 0 4px;
 .column ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; flex: 1; }
 .column li.card { padding: 8px 10px; gap: 6px; border-radius: 6px; background: var(--bg); cursor: default; }
 .column li.card[draggable=true] { cursor: grab; }
-.column li.card.p-high { border-left: 3px solid var(--danger); }
+.column li.card.rank-1 { border-left: 3px solid var(--danger); }
 .column li.card .title { color: var(--text); font-weight: 500; }
 .column.closed li.card .title { color: var(--muted); }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }

@@ -26,6 +26,8 @@
   <script src="../taski_src/tasks.js"></script>
   <script src="../taski_src/projects.js"></script>
   <script src="../taski_src/files.js"></script>
+  <script src="../taski_src/ui/dom.js"></script>
+  <script src="../taski_src/ui/views.js"></script>
   <script>
   (async function () {
     const md = Taski.markdown;
@@ -40,6 +42,8 @@
       const sa = JSON.stringify(a), sb = JSON.stringify(b);
       if (sa !== sb) throw new Error(`expected ${sb}\n     got ${sa}`);
     };
+
+    const ok = (cond, message = 'expected true') => { if (!cond) throw new Error(message); };
 
     const TASK = '---\ntype: task\nstatus: todo\nowner: me\n---\n\n# Hello world\n\nIntro.\n\n```\n- [ ] not a box\n```\n\n- [ ] one\n- [x] two\n\n## Files\n\n- [Notes](./notes.md)\n- [Site](https://example.com)\n';
 
@@ -128,7 +132,7 @@
 
     test('parseTask', () => {
       const t = parseTask('p/tasks/hello/README.md', TASK, 'r1');
-      eq([t.slug, t.title, t.status, t.priority], ['hello', 'Hello world', 'todo', 'normal']);
+      eq([t.slug, t.title, t.status, t.priority], ['hello', 'Hello world', 'todo', '']); // no priority until the file sets one
       eq(t.progress, { done: 1, total: 2 });
       eq(t.files.map((f) => f.path), ['p/tasks/hello/notes.md', null]);
       eq(parseTask('p/tasks/x.md', 'no title', '').title, 'x');
@@ -158,6 +162,55 @@
       const mk = (status, title) => parseTask(`${title}.md`, `---\nstatus: ${status}\n---\n# ${title}`, '');
       const sorted = [mk('done', 'e'), mk('weird', 'd'), mk('todo', 'c'), mk('backlog', 'b'), mk('review', 'a2'), mk('doing', 'a1')].sort(taskComparator(wf));
       eq(sorted.map((t) => t.title), ['a1', 'a2', 'b', 'c', 'd', 'e']);
+    });
+
+    test('workflowFrom: priorities, in order, with a default', () => {
+      const { workflowFrom, DEFAULT_WORKFLOW, DEFAULT_PRIORITIES, priorityRank } = Taski.tasks;
+      eq(DEFAULT_WORKFLOW.priorities, DEFAULT_PRIORITIES);
+      eq(DEFAULT_PRIORITIES, ['high', 'normal', 'low']);
+      const wf = workflowFrom(new Map([['priorities', 'urgent, high, medium, low, high']]));
+      eq(wf.priorities, ['urgent', 'high', 'medium', 'low']);
+      // rank: 0 none, 1 highest … n lowest, a value the list lacks after all of them
+      eq(['', 'urgent', 'low', 'normal'].map((p) => priorityRank(wf, p)), [0, 1, 4, 5]);
+    });
+
+    test('compareTasks and sortTasks rank priorities; none goes last', () => {
+      const { workflowFrom, taskComparator, priorityRank } = Taski.tasks;
+      const wf = workflowFrom(new Map([['priorities', 'urgent, high, medium, low']]));
+      const mk = (priority, title) => parseTask(`${title}.md`, `---\nstatus: todo\n${priority === null ? '' : `priority: ${priority}\n`}---\n# ${title}`, '');
+      const tasks = [mk(null, 'none'), mk('low', 'low'), mk('weird', 'weird'), mk('urgent', 'urgent'), mk('medium', 'medium'), mk('high', 'high')];
+      eq([...tasks].sort(taskComparator(wf)).map((t) => t.title), ['urgent', 'high', 'medium', 'low', 'weird', 'none']);
+      const rank = (t) => priorityRank(wf, t.priority);
+      const { sortTasks } = Taski.views;
+      eq(sortTasks(tasks, 'priority-desc', rank).map((t) => t.title), ['urgent', 'high', 'medium', 'low', 'weird', 'none']);
+      eq(sortTasks(tasks, 'priority-asc', rank).map((t) => t.title), ['weird', 'low', 'medium', 'high', 'urgent', 'none']);
+      const ties = [mk('high', 'b'), mk('high', 'a'), mk(null, 'n2'), mk(null, 'n1')];
+      eq(sortTasks(ties, 'priority-desc', rank).map((t) => t.title), ['b', 'a', 'n2', 'n1']); // ties keep their order
+    });
+
+    test('priority icons and classes follow the rank', () => {
+      const { workflowFrom, DEFAULT_WORKFLOW } = Taski.tasks;
+      const { priorityIcon, priorityClass } = Taski.views;
+      const wf = workflowFrom(new Map([['priorities', 'urgent, high, medium, low']]));
+      const lit = (p) => (priorityIcon(wf, p).match(/<rect/g) || []).length - (priorityIcon(wf, p).match(/opacity/g) || []).length;
+      eq(['high', 'medium', 'low'].map(lit), [3, 2, 1]);
+      ok(priorityIcon(wf, 'urgent').includes('<circle'), 'the highest is "!"');
+      ok(priorityIcon(wf, '').includes('M1.5 7h2.5'), 'none is dashes');
+      eq([priorityClass(wf, 'urgent'), priorityClass(wf, 'low'), priorityClass(wf, 'medium'), priorityClass(wf, '')], ['rank-1', 'rank-last', '', '']);
+      eq(priorityClass(DEFAULT_WORKFLOW, 'high'), 'rank-1');
+    });
+
+    test('createTask starts as normal when listed, else with no priority', async () => {
+      const { workflowFrom, DEFAULT_WORKFLOW, createTask } = Taski.tasks;
+      const wf = workflowFrom(new Map([['priorities', 'urgent, high, medium, low']]));
+      const fs = memStorage({ 'p/README.md': '# P\n\n## Tasks\n' });
+      const project = (workflow) => ({ path: 'p', title: 'P', readmePath: 'p/README.md', readme: { text: '# P\n\n## Tasks\n', rev: '0' }, workflow });
+      await createTask(fs, project(DEFAULT_WORKFLOW), { title: 'One' });
+      await createTask(fs, project(wf), { title: 'Two' });
+      await createTask(fs, project(wf), { title: 'Three', priority: 'medium' });
+      ok(fs.files.get('p/tasks/one/README.md').includes('priority: normal\n'));
+      ok(!fs.files.get('p/tasks/two/README.md').includes('priority'));
+      ok(fs.files.get('p/tasks/three/README.md').includes('priority: medium\n'));
     });
 
     test('withoutSection drops a section for display only', () => {

@@ -257,6 +257,49 @@ class McpTest(unittest.TestCase):
         # scoped to another project: refused
         self.assertTrue(self.call(self.scoped("beta"), "update_task", path="alpha/tasks/one.md", fields={"status": "done"})[0])
 
+    def test_project_priorities(self):
+        self.plan()
+        mcp = self.scoped()
+        # no `priorities:` line: the default list, highest first
+        self.assertEqual(self.call(mcp, "get_project", project="alpha")[1]["priorities"], ["high", "normal", "low"])
+        # a task without a priority has none (empty), it is not "normal"
+        self.assertEqual(self.call(mcp, "list_tasks", project="alpha")[1]["tasks"][0]["priority"], "")
+        path = os.path.join(self.root, "alpha", "README.md")
+        text = self.slurp(path).replace("labels: bug, idea\n", "labels: bug, idea\npriorities: urgent, high, medium, low, high\n")
+        with open(path, "w") as f:
+            f.write(text)
+        # the project's own list, in order, without duplicates
+        self.assertEqual(self.call(mcp, "get_project", project="alpha")[1]["priorities"], ["urgent", "high", "medium", "low"])
+        task = os.path.join(self.root, "alpha", "tasks", "one.md")
+        err, result = self.call(mcp, "update_task", path="alpha/tasks/one.md", fields={"priority": "urgent"})
+        self.assertFalse(err, result)
+        self.assertEqual(result["priority"], "urgent")
+        self.assertIn("priority: urgent\n", self.slurp(task))
+        # a value outside the project's list is refused, with the list in the hint, and nothing is written
+        before = self.slurp(task)
+        err, message = self.call(mcp, "update_task", path="alpha/tasks/one.md", fields={"priority": "normal"})
+        self.assertTrue(err)
+        self.assertIn("urgent, high, medium, low", message)
+        self.assertEqual(self.slurp(task), before)
+        # clearing means no priority
+        err, result = self.call(mcp, "update_task", path="alpha/tasks/one.md", fields={"priority": None})
+        self.assertFalse(err, result)
+        self.assertEqual(result["priority"], "")
+        self.assertNotIn("priority", self.slurp(task))
+        # a task that already holds a value the list lacks is still reported as written, never rewritten
+        with open(task, "w") as f:
+            f.write("---\nstatus: backlog\npriority: normal\n---\n# One\n")
+        listed = {t["title"]: t["priority"] for t in self.call(mcp, "list_tasks", project="alpha")[1]["tasks"]}
+        self.assertEqual(listed["One"], "normal")
+        # new tasks: no priority when the list lacks "normal", the line is left out
+        err, created = self.call(mcp, "create_task", project="alpha", title="Fresh", priority="medium")
+        self.assertFalse(err, created)
+        self.assertIn("priority: medium\n", self.slurp(os.path.join(self.root, "alpha", "tasks", "fresh.md")))
+        err, created = self.call(mcp, "create_task", project="alpha", title="Plain")
+        self.assertFalse(err, created)
+        self.assertNotIn("priority", self.slurp(os.path.join(self.root, "alpha", "tasks", "plain.md")))
+        self.assertTrue(self.call(mcp, "create_task", project="alpha", title="Bad", priority="normal")[0])
+
     def test_create_task(self):
         self.plan()
         mcp = self.scoped()

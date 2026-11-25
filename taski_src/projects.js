@@ -149,6 +149,8 @@ async function loadProject(storage, path) {
   for (const t of tasks) if (!t.fields.get('status')) t.status = workflow.initial;
   const strays = [...new Set(tasks.map((t) => t.status).filter((s) => !workflow.statuses.includes(s)))];
   if (strays.length) warnings.push(`Tasks use statuses this project does not list: ${strays.join(', ')}. Move them under Settings.`);
+  const strayPriorities = [...new Set(tasks.map((t) => t.priority).filter((x) => x && !workflow.priorities.includes(x)))];
+  if (strayPriorities.length) warnings.push(`Tasks use priorities this project does not list: ${strayPriorities.join(', ')}. Move them under Settings.`);
   const labels = [...new Set([...splitList(fm?.fields.get('labels')), ...tasks.flatMap((t) => t.tags).sort()])];
   const milestones = milestonesFrom(fm?.fields);
   for (const name of [...new Set(tasks.map((t) => t.milestone).filter(Boolean))].sort()) {

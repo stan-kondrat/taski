@@ -8,7 +8,10 @@ const { basename, dirname, join, relativeLink, resolveRelative } = Taski.path;
 const { NotFoundError } = Taski.storage;
 
 const STATUSES = ['todo', 'doing', 'blocked', 'done', 'cancelled'];
-const PRIORITIES = ['high', 'normal', 'low'];
+/** Priorities of a project that lists none, highest first. */
+const DEFAULT_PRIORITIES = ['high', 'normal', 'low'];
+/** The "Linear-style" preset offered in a project's Settings. */
+const LINEAR_PRIORITIES = ['urgent', 'high', 'medium', 'low'];
 
 /**
  * A project's task statuses, from its README frontmatter:
@@ -19,6 +22,7 @@ const PRIORITIES = ['high', 'normal', 'low'];
  * @property {Set<string>} active
  * @property {Set<string>} closed
  * @property {string} initial   Status of new tasks: the first open one.
+ * @property {string[]} priorities  The project's `priorities`, highest first; a task may also have none.
  */
 
 /** @param {string | undefined} value */
@@ -41,10 +45,33 @@ function workflowFrom(fields = new Map()) {
   if (!closed.length && statuses.length > 1) closed = [statuses[statuses.length - 1]];
   const active = pick('active-statuses', ['doing']).filter((s) => !closed.includes(s));
   const initial = statuses.find((s) => !active.includes(s) && !closed.includes(s)) || statuses[0];
-  return { statuses, active: new Set(active), closed: new Set(closed), initial };
+  const priorities = splitList(fields.get('priorities'));
+  return { statuses, active: new Set(active), closed: new Set(closed), initial, priorities: priorities.length ? priorities : DEFAULT_PRIORITIES };
 }
 
 const DEFAULT_WORKFLOW = workflowFrom();
+
+/**
+ * Rank of a priority: 0 for none, 1 for the highest, up to the list length. A value the
+ * list does not have ranks after all listed ones, but before none.
+ * @param {Workflow} wf
+ * @param {string} priority
+ */
+function priorityRank(wf, priority) {
+  if (!priority) return 0;
+  const i = wf.priorities.indexOf(priority);
+  return i < 0 ? wf.priorities.length + 1 : i + 1;
+}
+
+/**
+ * Sort key of a priority, highest first: the ranked ones in order, then unlisted values, then none.
+ * @param {Workflow} wf
+ * @param {string} priority
+ */
+function priorityOrder(wf, priority) {
+  const rank = priorityRank(wf, priority);
+  return rank === 0 ? wf.priorities.length + 2 : rank;
+}
 
 /**
  * A project milestone: a name tasks refer to in their `milestone` field.
@@ -158,7 +185,7 @@ function parseTask(path, text, rev, updated = 0) {
     fields: fm.fields,
     title: getTitle(fm.body) || slug,
     status: fm.fields.get('status') || 'todo',
-    priority: fm.fields.get('priority') || 'normal',
+    priority: fm.fields.get('priority') || '',
     due: fm.fields.get('due') || '',
     milestone: fm.fields.get('milestone') || '',
     tags: (fm.fields.get('tags') || '').split(',').map((t) => t.trim()).filter(Boolean),
@@ -261,7 +288,6 @@ function setTaskCheck(storage, task, n, done) {
   return saveTask(storage, task, setCheckbox(task.text, n, done));
 }
 
-const PRIORITY_ORDER = new Map(PRIORITIES.map((p, i) => [p, i]));
 const KIND_ORDER = { active: 0, open: 1, closed: 2 };
 
 /**
@@ -288,7 +314,7 @@ function taskComparator(wf = DEFAULT_WORKFLOW) {
 function compareTasks(a, b, wf = DEFAULT_WORKFLOW) {
   return (
     statusRank(wf, a.status) - statusRank(wf, b.status) ||
-    (PRIORITY_ORDER.get(a.priority) ?? 1) - (PRIORITY_ORDER.get(b.priority) ?? 1) ||
+    priorityOrder(wf, a.priority) - priorityOrder(wf, b.priority) ||
     (a.due || '9999').localeCompare(b.due || '9999') ||
     a.title.localeCompare(b.title)
   );
@@ -321,14 +347,18 @@ async function exists(storage, path) {
  * @param {{title: string, singleFile?: boolean, status?: string, priority?: string, due?: string, estimate?: string, milestone?: string, tags?: string[], description?: string}} input
  * @returns {Promise<Task>}
  */
-async function createTask(storage, project, { title, singleFile = false, status = '', priority = 'normal', due = '', estimate = '', milestone = '', tags = [], description = '' }) {
+async function createTask(storage, project, { title, singleFile = false, status = '', priority = undefined, due = '', estimate = '', milestone = '', tags = [], description = '' }) {
   status = status || (project.workflow || DEFAULT_WORKFLOW).initial;
   const base = slugify(title);
   let slug = base;
   const pathFor = (/** @type {string} */ s) => (singleFile ? join(project.path, 'tasks', `${s}.md`) : join(project.path, 'tasks', s, 'README.md'));
   for (let n = 2; await exists(storage, pathFor(slug)); n++) slug = `${base}-${n}`;
   const path = pathFor(slug);
-  const front = ['type: task', `status: ${status}`, `priority: ${priority || 'normal'}`];
+  // Without a choice, new tasks start as "normal" when the project lists it, else with no priority.
+  const wf = project.workflow || DEFAULT_WORKFLOW;
+  if (priority === undefined) priority = wf.priorities.includes('normal') ? 'normal' : '';
+  const front = ['type: task', `status: ${status}`];
+  if (priority) front.push(`priority: ${priority}`);
   if (due) front.push(`due: ${due}`);
   front.push(`created: ${today()}`);
   if (estimate) front.push(`estimate: ${estimate}`);
@@ -351,7 +381,7 @@ async function createTask(storage, project, { title, singleFile = false, status 
 }
 
 Taski.tasks = {
-  STATUSES, PRIORITIES, DEFAULT_WORKFLOW, splitList, workflowFrom, milestonesFrom, formatMilestones, statusKind, statusRank,
+  STATUSES, DEFAULT_PRIORITIES, LINEAR_PRIORITIES, priorityRank, DEFAULT_WORKFLOW, splitList, workflowFrom, milestonesFrom, formatMilestones, statusKind, statusRank,
   RELATION_FIELDS, linkRelations, isBlocked, parseTask, loadTask, saveTask, setTaskField, setTaskCheck, compareTasks, taskComparator, today, exists, createTask,
 };
 })(window.Taski = window.Taski || {});

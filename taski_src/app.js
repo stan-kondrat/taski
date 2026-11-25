@@ -675,6 +675,15 @@ function ctx() {
       }
       await refresh();
     },
+    movePriority: async (project, from, to) => {
+      try {
+        for (const t of project.tasks.filter((x) => x.priority === from)) await setTaskField(/** @type {any} */ (storage), t, 'priority', to);
+        notify(`Moved ${from} to ${to || 'no priority'}`);
+      } catch (e) {
+        showError(e);
+      }
+      await refresh();
+    },
     showLabel: (project, label) => {
       uiFor(project.path).labels = [label];
       showProject(project.path);

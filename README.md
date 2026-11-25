@@ -71,7 +71,7 @@ agent can read and edit the same workspace. The agent gets the same limits as th
 | Tool | What it does |
 |------|--------------|
 | `list_projects` | The project folders the agent may use. |
-| `get_project` | A project's statuses, labels and milestones with progress (done of total). |
+| `get_project` | A project's statuses, labels, priorities (highest first) and milestones with progress (done of total). |
 | `list_tasks` | Tasks with status, priority, due date, milestone, tags, checklist progress and relations (`blocked_by`, `blocks`, `related`, and `blocked` while a blocker is unfinished); filter by `status`, `milestone`, `tag`, `open_only` or `blocked`. `open_only` with `blocked: false` gives the tasks ready to start. |
 | `create_task` | A new task file, linked under `## Tasks` in the project README, optionally with a milestone, tags and relations. |
 | `update_task` | Change `status`, `priority`, `due`, `milestone`, `tags`, `blocked_by`, `blocks` or `related`, touching only those lines. Relations must name existing tasks and cannot make a task block itself. |
@@ -79,7 +79,7 @@ agent can read and edit the same workspace. The agent gets the same limits as th
 | `read_file`, `write_file`, `make_folder`, `move_file`, `delete_file` | Plain file access for everything else. |
 
 `create_task` and `update_task` check values against the project: a status must be one of its
-`statuses`, a milestone one of its `milestones`, a date a real `YYYY-MM-DD`. A refusal says
+`statuses`, a priority one of its `priorities`, a milestone one of its `milestones`, a date a real `YYYY-MM-DD`. A refusal says
 what is allowed, so the agent can correct itself. `write_file` and `update_task` refuse to
 overwrite a file that changed since the agent read it (the `revision` from `read_file` or
 `list_tasks`). Every tool carries MCP annotations (read-only, destructive, idempotent) so
@@ -279,7 +279,7 @@ tags: kubernetes, raspberry-pi
 
 - Frontmatter is a strict subset of YAML: one `key: value` per line, no nesting.
 - `status`: `todo`, `doing`, `blocked`, `done`, `cancelled`, unless the project sets its own
-  (below). `priority`: `low`, `normal`, `high`. Dates: `YYYY-MM-DD`. `tags`: the task's labels.
+  (below). `priority`: one of the project's priorities (below), or none. Dates: `YYYY-MM-DD`. `tags`: the task's labels.
   `milestone`: one of the project's milestones (below).
 - `blocked-by`, `blocks`, `related`: relations to other tasks, comma-separated, as in Linear. A
   name is a task's file or folder name (`fix-login`), or `project/name` for another project's
@@ -290,7 +290,7 @@ tags: kubernetes, raspberry-pi
 - `## Files` in a task or project README links its documents: relative paths or URLs.
   Taski lists them with previews, next to unlinked files it finds in the same folder.
 
-### Project statuses, labels and milestones
+### Project statuses, labels, priorities and milestones
 
 Each project can have its own workflow, set in its README frontmatter (or under
 **Settings** on the project page):
@@ -303,6 +303,7 @@ statuses: backlog, todo, doing, review, done, cancelled
 active-statuses: doing, review
 closed-statuses: done, cancelled
 labels: bug, idea, research
+priorities: urgent, high, medium, low
 milestones: MVP (2026-12-01), Beta, 1.0
 ---
 ```
@@ -312,6 +313,11 @@ milestones: MVP (2026-12-01), Beta, 1.0
 - `closed-statuses` are finished: hidden from open tasks (default `done` and `cancelled`,
   or the last status).
 - `labels` are suggested when labelling tasks; labels tasks already use are added.
+- `priorities` are the project's priorities, highest first; the position is the rank (default
+  `high, normal, low`). A task may also have none, which ranks last, and the priority picker
+  numbers them like Linear's (0 none, 1 highest). Sort and filter by priority on the project
+  page; **Settings** edits the list and offers an `urgent, high, medium, low` preset. A priority
+  tasks hold but the list lacks is kept and offered under **Settings** to move.
 - `milestones` are the project's milestones in order, each with an optional date in
   brackets. A task joins one with `milestone: MVP`. The project page shows each milestone's
   progress and filters by it; the sidebar lists them under their project; the overview shows

@@ -15,7 +15,7 @@ no nesting, no multi-line values, no duplicate keys.
 |------------|-----------------------------------------------|
 | `type`     | `workspace`, `project`, `task`                |
 | `status`   | task: `todo` `doing` `blocked` `done` `cancelled`; project: `active` `paused` `archived` |
-| `priority` | `low` `normal` `high`                         |
+| `priority` | task: one of the project's `priorities`, or none |
 | `due`      | `YYYY-MM-DD`                                  |
 | `created`  | `YYYY-MM-DD`                                  |
 | `tags`     | task labels, comma-separated                  |
@@ -24,7 +24,7 @@ no nesting, no multi-line values, no duplicate keys.
 | `blocks`   | task: tasks that wait for this one, comma-separated |
 | `related`  | task: tasks that are related, comma-separated |
 
-A project README may set its own task statuses and labels:
+A project README may set its own task statuses, labels, priorities and milestones:
 
 | key               | meaning                                                         |
 |-------------------|-----------------------------------------------------------------|
@@ -32,19 +32,22 @@ A project README may set its own task statuses and labels:
 | `active-statuses` | statuses that mean "in progress" (default `doing`)              |
 | `closed-statuses` | statuses that mean finished (default `done`, `cancelled`, else the last one) |
 | `labels`          | suggested task labels, comma-separated                          |
+| `priorities`      | the project's priorities, highest first (default `high, normal, low`) |
 | `milestones`      | the project's milestones in order, each with an optional `(YYYY-MM-DD)` date |
 
 ```
 statuses: backlog, todo, doing, review, done, cancelled
 active-statuses: doing, review
 labels: bug, idea, research
+priorities: urgent, high, medium, low
 milestones: MVP (2026-12-01), Beta, 1.0
 ```
 
 Without `statuses` a project uses `todo doing blocked done cancelled`. Use only the
 project's statuses in its tasks. New tasks start in the first status that is neither
 active nor closed. A task's `milestone` must be one of the project's `milestones`; to
-add a milestone, add it to the project README first.
+add a milestone, add it to the project README first. The same goes for `priority` and
+`priorities`; a task may also have no priority, which ranks after all of them.
 
 The first `# Heading` is the title. Everything else is free Markdown. Checklists use
 `- [ ]` and `- [x]`.

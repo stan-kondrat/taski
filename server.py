@@ -613,9 +613,9 @@ MCP_VERSIONS = ("2026-07-28", "2025-06-18", "2025-03-26", "2024-11-05")
 MCP_FALLBACK_VERSION = "2025-06-18"
 MCP_INSTRUCTIONS = (
     "Taski workspace of Markdown files: projects with tasks and milestones. Start with "
-    "list_projects, then get_project (statuses, labels, milestones with progress) and "
+    "list_projects, then get_project (statuses, labels, priorities, milestones with progress) and "
     "list_tasks. Use create_task and update_task for tasks: they check values against the "
-    "project's own statuses and milestones and change only the lines they must. Use "
+    "project's own statuses, priorities and milestones and change only the lines they must. Use "
     "read_file and write_file for everything else, after reading AGENTS.md at the workspace "
     "root (and in the project) for the file format. read_file returns a revision; pass it to "
     "write_file or delete_file so a change made meanwhile is never overwritten. Omit "
@@ -625,7 +625,8 @@ TASK_FIELDS = ("status", "priority", "due", "milestone", "tags")
 # Relations between tasks, like Linear's: tool argument -> frontmatter key. Either task may record one.
 RELATIONS = {"blocked_by": "blocked-by", "blocks": "blocks", "related": "related"}
 RELATION_INVERSE = {"blocked_by": "blocks", "blocks": "blocked_by", "related": "related"}
-PRIORITIES = ("low", "normal", "high")
+# Highest first: a project may list its own in `priorities:`. No priority (empty) is always allowed and ranks last.
+DEFAULT_PRIORITIES = ("high", "normal", "low")
 DEFAULT_STATUSES = ("todo", "doing", "blocked", "done", "cancelled")
 FIELD_RE = re.compile(r"^([A-Za-z][\w-]*):\s?(.*)$")
 FENCE_RE = re.compile(r"^\s*(```+|~~~+)")
@@ -767,7 +768,7 @@ def split_list(value):
 
 
 def project_model(fields):
-    """Statuses, labels and milestones a project README declares (defaults when it declares none)."""
+    """Statuses, labels, milestones and priorities a project README declares (defaults when it declares none)."""
     statuses = split_list(fields.get("statuses")) or list(DEFAULT_STATUSES)
 
     def pick(key, fallback):
@@ -786,8 +787,9 @@ def project_model(fields):
         if name and name not in seen:
             seen.add(name)
             milestones.append({"name": name, "due": m.group(2) if m else ""})
+    priorities = list(dict.fromkeys(split_list(fields.get("priorities")))) or list(DEFAULT_PRIORITIES)
     return {"statuses": statuses, "active": active, "closed": closed, "initial": initial,
-            "labels": split_list(fields.get("labels")), "milestones": milestones}
+            "labels": split_list(fields.get("labels")), "milestones": milestones, "priorities": priorities}
 
 
 def status_kind(model, status):
@@ -828,7 +830,7 @@ _PROJECT = {"type": "string", "description": "Project folder name, as listed by 
 _REVISION = {"type": "string", "description": "The revision returned by read_file or an earlier write"}
 _TASK_PROPS = {
     "status": {"type": "string", "description": "One of the project's statuses (see get_project)"},
-    "priority": {"type": "string", "enum": list(PRIORITIES)},
+    "priority": {"type": "string", "description": "One of the project's priorities, highest first (see get_project); empty clears it"},
     "due": {"type": "string", "description": "Date as YYYY-MM-DD"},
     "milestone": {"type": "string", "description": "One of the project's milestones (see get_project)"},
     "tags": {"type": "array", "items": {"type": "string"}, "description": "The task's labels"},
@@ -859,10 +861,12 @@ MCP_TOOLS = [
           output={"projects": {"type": "array", "items": {"type": "object"}}}),
     _tool("get_project", "Get project overview",
           "A project's workflow and plan: its statuses (in board order, with which are active and "
-          "closed), the status new tasks start in, labels, and milestones with due date and progress "
-          "(tasks done of total). Read this before creating or updating tasks.",
+          "closed), the status new tasks start in, labels, priorities (highest first; a task may also "
+          "have none) and milestones with due date and progress (tasks done of total). Read this "
+          "before creating or updating tasks.",
           {"project": _PROJECT}, ["project"], read_only=True, idempotent=True,
           output={"project": {"type": "string"}, "title": {"type": "string"}, "statuses": {"type": "array"},
+                  "priorities": {"type": "array", "items": {"type": "string"}},
                   "milestones": {"type": "array"}, "task_count": {"type": "integer"}}),
     _tool("list_tasks", "List tasks",
           "List a project's tasks with their status, priority, due date, milestone, tags and checklist "
@@ -983,7 +987,7 @@ MCP_EVENTS = [
             "properties": {
                 "project": {"type": "string", "description": "Only tasks of this project (top-level folder name)."},
                 "status": {"type": "string", "description": "Only tasks with this status."},
-                "priority": {"type": "string", "description": "Only tasks with this priority: low, normal or high."},
+                "priority": {"type": "string", "description": "Only tasks with this priority, one of the project's priorities."},
                 "tag": {"type": "string", "description": "Only tasks that have this tag."},
             },
             "additionalProperties": False,
@@ -1466,7 +1470,7 @@ class McpServer:
             "title": title_of(body, slug),
             "status": status,
             "kind": status_kind(model, status),
-            "priority": fields.get("priority") or "normal",
+            "priority": fields.get("priority") or "",
             "due": fields.get("due") or "",
             "milestone": fields.get("milestone") or "",
             "tags": split_list(fields.get("tags")),
@@ -1610,8 +1614,9 @@ class McpServer:
         value = value.strip()
         if key == "status" and value not in model["statuses"]:
             raise ApiError(HTTPStatus.BAD_REQUEST, "unknown status %r; this project uses: %s" % (value, ", ".join(model["statuses"])))
-        if key == "priority" and value not in PRIORITIES:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "unknown priority %r; use: %s" % (value, ", ".join(PRIORITIES)))
+        if key == "priority" and value not in model["priorities"]:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "unknown priority %r; this project's priorities, highest first: %s. To change "
+                           "them, edit `priorities:` in the project README first." % (value, ", ".join(model["priorities"])))
         if key == "due" and not valid_date(value):
             raise ApiError(HTTPStatus.BAD_REQUEST, "due must be a real date as YYYY-MM-DD, got %r" % value)
         if key == "milestone" and value not in [m["name"] for m in model["milestones"]]:
@@ -1653,6 +1658,7 @@ class McpServer:
             "closed_statuses": model["closed"],
             "initial_status": model["initial"],
             "labels": model["labels"],
+            "priorities": model["priorities"],
             "milestones": milestones,
             "task_count": len(tasks),
             "open_task_count": sum(1 for t in tasks if t["kind"] != "closed"),
@@ -1723,8 +1729,11 @@ class McpServer:
                 if names:
                     relations[kind] = names
             self.check_no_cycle(new, relations, graph)
-        text = "\n".join(["---", "type: task", "status: %s" % model["initial"], "priority: normal",
-                          "created: %s" % datetime.date.today().isoformat(), "---", "", "# %s" % title, "", ""])
+        # New tasks start with "normal" when the project lists it, else with no priority.
+        head = ["---", "type: task", "status: %s" % model["initial"]]
+        if "normal" in model["priorities"]:
+            head.append("priority: normal")
+        text = "\n".join(head + ["created: %s" % datetime.date.today().isoformat(), "---", "", "# %s" % title, "", ""])
         for key in TASK_FIELDS:
             if key in values:
                 text = set_field(text, key, values[key])
