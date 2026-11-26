@@ -767,14 +767,16 @@ function projectView(ctx, project, ui) {
       h('button', { type: 'button', 'aria-label': `Clear ${kind} filter`, title: 'Clear', onclick: () => { clear(); render(); } }, '×'));
   if (ui.milestone && ui.milestone !== NO_MILESTONE && !project.milestones.some((m) => m.name === ui.milestone)) ui.milestone = '';
 
-  const matches = (/** @type {import('../tasks.js').Task} */ t, /** @type {boolean} */ skipBlocked = false) => {
+  // `skip` leaves one filter group out ('statuses', 'priorities' or 'blocked'), so a chip of that group
+  // can count the tasks it would show when selected, with every other filter applied.
+  const matches = (/** @type {import('../tasks.js').Task} */ t, /** @type {string} */ skip = '') => {
     const q = ui.query.toLowerCase();
     return (!q || t.title.toLowerCase().includes(q) || t.milestone.toLowerCase().includes(q) || t.tags.some((tag) => tag.toLowerCase().includes(q))) &&
       (!ui.labels.length || ui.labels.some((l) => t.tags.includes(l))) &&
-      (!ui.statuses?.length || ui.statuses.includes(t.status)) &&
-      (!ui.priorities?.length || ui.priorities.includes(t.priority)) &&
+      (skip === 'statuses' || !ui.statuses?.length || ui.statuses.includes(t.status)) &&
+      (skip === 'priorities' || !ui.priorities?.length || ui.priorities.includes(t.priority)) &&
       (!ui.milestone || t.milestone === (ui.milestone === NO_MILESTONE ? '' : ui.milestone)) &&
-      (skipBlocked || !ui.blocked || blockedMatch(ui.blocked, t));
+      (skip === 'blocked' || !ui.blocked || blockedMatch(ui.blocked, t));
   };
   // Same Open/Closed tab and layout rule as the list below.
   const inView = (/** @type {import('../tasks.js').Task} */ t) => ui.layout === 'board' || (ui.layout === 'graph' ? isOpen(t, project) : ui.filter === 'all' || (ui.filter === 'open') === isOpen(t, project));
@@ -810,12 +812,12 @@ function projectView(ctx, project, ui) {
       return h(`button.status-opt${on ? '.on' : ''}`, {
         type: 'button', 'aria-pressed': on ? 'true' : 'false', title: `Show ${label} tasks`,
         onclick: () => { setBlocked(on ? '' : key); render(); },
-      }, label, h('span.count', null, project.tasks.filter((t) => inView(t) && matches(t, true) && blockedMatch(key, t)).length));
+      }, label, h('span.count', null, project.tasks.filter((t) => inView(t) && matches(t, 'blocked') && blockedMatch(key, t)).length));
     }));
     const allStatuses = [...project.workflow.statuses, ...new Set(project.tasks.map((t) => t.status).filter((x) => !project.workflow.statuses.includes(x)))];
     statusBar.replaceChildren(...allStatuses.map((st) => {
       const on = !!ui.statuses?.includes(st);
-      const n = project.tasks.filter((t) => t.status === st).length;
+      const n = project.tasks.filter((t) => inView(t) && matches(t, 'statuses') && t.status === st).length;
       return h(`button.status-opt${on ? '.on' : ''}`, {
         type: 'button', 'aria-pressed': on ? 'true' : 'false', title: `Show tasks with status ${st}`,
         onclick: () => { ui.statuses = on ? (ui.statuses || []).filter((x) => x !== st) : [...(ui.statuses || []), st]; render(); },
@@ -824,11 +826,11 @@ function projectView(ctx, project, ui) {
     const prioritySteps = ['', ...project.workflow.priorities, ...new Set(project.tasks.map((t) => t.priority).filter((x) => x && !project.workflow.priorities.includes(x)))];
     priorityBar.replaceChildren(...prioritySteps.map((pr) => {
       const on = !!ui.priorities?.includes(pr);
-      const n = project.tasks.filter((t) => t.priority === pr).length;
+      const n = project.tasks.filter((t) => inView(t) && matches(t, 'priorities') && t.priority === pr).length;
       return h(`button.status-opt${on ? '.on' : ''}`, {
-        type: 'button', 'aria-pressed': on ? 'true' : 'false', title: pr ? `Show tasks with priority ${pr}` : 'Show tasks without a priority',
+        type: 'button', 'aria-pressed': on ? 'true' : 'false', title: !pr ? 'Show tasks without a priority' : project.workflow.priorities.includes(pr) ? `Show tasks with priority ${pr}` : `Show tasks with priority ${pr}, which the project's list does not have (move them under Settings)`,
         onclick: () => { ui.priorities = on ? (ui.priorities || []).filter((x) => x !== pr) : [...(ui.priorities || []), pr]; render(); },
-      }, h('span.prio-icon', { html: priorityIcon(project.workflow, pr) }), pr || 'No priority', h('span.count', null, n));
+      }, h('span.prio-icon', { html: priorityIcon(project.workflow, pr) }), pr || 'No priority', !pr || project.workflow.priorities.includes(pr) ? null : h('span.hint', null, ' ?'), h('span.count', null, n));
     }));
     labelBar.replaceChildren(...(project.labels.length
       ? [...project.labels.map((l) => labelChip(l, {

@@ -200,6 +200,31 @@
       eq(priorityClass(DEFAULT_WORKFLOW, 'high'), 'rank-1');
     });
 
+    test('priority and status counts follow the other active filters', () => {
+      const { workflowFrom } = Taski.tasks;
+      const wf = workflowFrom(new Map([['priorities', 'urgent, high, medium, low']]));
+      const mk = (title, status, priority) => ({ path: `p/tasks/${title}.md`, title, status, priority, tags: [], milestone: '', due: '', files: [], progress: { done: 0, total: 0 },
+        relations: { blockedBy: [], blocks: [], related: [] }, fields: new Map(), created: '', estimate: '' });
+      const project = { path: 'p', title: 'P', workflow: wf, labels: [], milestones: [], status: 'active', warnings: [], writable: false,
+        tasks: [mk('a', 'todo', 'high'), mk('b', 'done', 'high'), mk('c', 'done', 'high'), mk('d', 'todo', 'low'), mk('e', 'todo', 'normal')] };
+      const ctx = new Proxy({}, { get: () => () => {} });
+      // Open tab: the done "high" tasks are not counted, and the count matches the list.
+      let ui = { layout: 'list', filter: 'open', sort: 'default', query: '', labels: [], statuses: [], priorities: ['high'], milestone: '', blocked: '' };
+      let el = Taski.views.projectView(ctx, project, ui);
+      const text = el.textContent;
+      ok(text.includes('1 of 5'), `header agrees with the list: ${text}`);
+      ok(!text.includes('No tasks match'));
+      const prio = [...el.querySelectorAll('.status-bar')].map((b) => b.textContent).find((t) => t.includes('No priority'));
+      ok(/high1/.test(prio) && /low1/.test(prio) && /normal ?\??1/.test(prio) && /urgent0/.test(prio), `priority counts: ${prio}`);
+      // A status filter narrows the priority counts, but not the status chips' own counts.
+      ui = { ...ui, statuses: ['done'], priorities: [], filter: 'all' };
+      el = Taski.views.projectView(ctx, project, ui);
+      const bars2 = [...el.querySelectorAll('.status-bar')].map((b) => b.textContent);
+      ok(/high2/.test(bars2.find((t) => t.includes('No priority'))), `high among done: ${bars2}`);
+      ok(/low0/.test(bars2.find((t) => t.includes('No priority'))));
+      ok(/todo3/.test(bars2.find((t) => t.includes('todo'))), `status chips ignore their own filter: ${bars2}`);
+    });
+
     test('createTask starts as normal when listed, else with no priority', async () => {
       const { workflowFrom, DEFAULT_WORKFLOW, createTask } = Taski.tasks;
       const wf = workflowFrom(new Map([['priorities', 'urgent, high, medium, low']]));
